@@ -10,11 +10,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,21 +41,7 @@ import java.io.IOException
 import java.util.*
 
 // Модели данных
-data class User(
-    val name: String,
-    val webhookUrl: String,
-    val userId: String,
-    val avatar: String,
-    var photoUrl: String = ""
-)
-
-data class UserTimerState(
-    var activeTaskId: String? = null,
-    var timerSeconds: Int = 0,
-    var pausedTaskId: String? = null,
-    var pausedSeconds: Int = 0,
-    var isTimerPaused: Boolean = false
-)
+data class User(val name: String, val webhookUrl: String, val userId: String, val avatar: String)
 
 data class Task(
     val id: String,
@@ -64,8 +50,6 @@ data class Task(
     val timeSpent: Int,
     val timeEstimate: Int,
     val status: String = "",
-    val createdDate: String = "",
-    val deadline: String = "",
     var isTimerRunning: Boolean = false
 ) {
     val progressPercent: Int get() = if (timeEstimate > 0) (timeSpent * 100 / timeEstimate) else 0
@@ -92,31 +76,6 @@ data class Task(
         val estimateMinutes = (timeEstimate % 3600) / 60
         return String.format("%d:%02d / %d:%02d", spentHours, spentMinutes, estimateHours, estimateMinutes)
     }
-
-    val formattedCreatedDate: String get() {
-        return if (createdDate.isNotEmpty()) {
-            try {
-                // Извлекаем дату из формата "2025-04-25T05:32:42+05:00"
-                createdDate.substring(0, 10)
-            } catch (e: Exception) {
-                createdDate
-            }
-        } else {
-            "Не указана"
-        }
-    }
-
-    val formattedDeadline: String get() {
-        return if (deadline.isNotEmpty()) {
-            try {
-                deadline.substring(0, 10)
-            } catch (e: Exception) {
-                deadline
-            }
-        } else {
-            "Не указан"
-        }
-    }
 }
 
 enum class WorkStatus { BEFORE_WORK, WORKING, BREAK, LUNCH, AFTER_WORK }
@@ -137,39 +96,36 @@ class MainViewModel : ViewModel() {
     var workStatus by mutableStateOf(WorkStatus.WORKING)
     var isLoading by mutableStateOf(false)
     var errorMessage by mutableStateOf<String?>(null)
+    var sendComments by mutableStateOf(true) // Настройка отправки комментариев
 
-    // Состояние таймеров для каждого пользователя
-    private val userTimerStates = mutableMapOf<String, UserTimerState>()
+    // Состояние таймера
+    var activeTimer by mutableStateOf<String?>(null)
+    var timerSeconds by mutableStateOf(0)
+    var pausedTimerTaskId by mutableStateOf<String?>(null) // ID задачи с приостановленным таймером
+    var pausedTimerSeconds by mutableStateOf(0) // Время приостановленного таймера
+    var isTimerPaused by mutableStateOf(false) // Флаг паузы таймера
     var currentTime by mutableStateOf("")
 
-    // Инициализация состояний таймеров для всех пользователей
     init {
-        users.forEach { user ->
-            userTimerStates[user.userId] = UserTimerState()
-        }
         updateWorkStatus()
         loadTasks()
         startPeriodicUpdates()
         startPeriodicTaskUpdates()
         startTimeUpdates()
-        loadUserPhotos()
-        startGlobalTimer()
     }
-
-    // Получение текущего состояния таймера
-    private fun getCurrentTimerState(): UserTimerState {
-        return userTimerStates[users[currentUserIndex].userId] ?: UserTimerState()
-    }
-
-    // Геттеры для UI (работают с текущим пользователем)
-    val activeTimer: String? get() = getCurrentTimerState().activeTaskId
-    val timerSeconds: Int get() = getCurrentTimerState().timerSeconds
-    val pausedTimerTaskId: String? get() = getCurrentTimerState().pausedTaskId
-    val pausedTimerSeconds: Int get() = getCurrentTimerState().pausedSeconds
-    val isTimerPaused: Boolean get() = getCurrentTimerState().isTimerPaused
 
     fun switchUser(index: Int) {
-        // Просто переключаем пользователя, таймеры продолжают работать независимо
+        // Останавливаем активный таймер при смене пользователя и сохраняем время
+        activeTimer?.let { taskId ->
+            val currentTask = tasks.find { it.id == taskId }
+            currentTask?.let { stopTimerAndSaveTime(it) }
+        }
+        activeTimer = null
+        timerSeconds = 0
+        pausedTimerTaskId = null
+        pausedTimerSeconds = 0
+        isTimerPaused = false
+
         currentUserIndex = index
         loadTasks()
     }
@@ -178,6 +134,10 @@ class MainViewModel : ViewModel() {
         isLoading = true
         errorMessage = null
         val user = users[currentUserIndex]
+
+        // Сохраняем состояние активного таймера перед загрузкой
+        val currentActiveTimer = activeTimer
+        val currentTimerSeconds = timerSeconds
 
         // Получаем ВСЕ задачи пользователя без фильтрации по статусу
         val url = "${user.webhookUrl}tasks.task.list" +
@@ -188,9 +148,7 @@ class MainViewModel : ViewModel() {
                 "&select[]=TIME_SPENT_IN_LOGS" +
                 "&select[]=TIME_ESTIMATE" +
                 "&select[]=STATUS" +
-                "&select[]=RESPONSIBLE_ID" +
-                "&select[]=CREATED_DATE" +
-                "&select[]=DEADLINE"
+                "&select[]=RESPONSIBLE_ID"
 
         println("Loading tasks with URL: $url")
 
@@ -247,16 +205,26 @@ class MainViewModel : ViewModel() {
                                     }
                                 }
 
-                                // Восстанавливаем состояние таймера для текущего пользователя
-                                val currentTimerState = getCurrentTimerState()
+                                // Восстанавливаем состояние таймера после загрузки
                                 tasksList.forEach { task ->
-                                    if (task.id == currentTimerState.activeTaskId) {
+                                    if (task.id == currentActiveTimer) {
                                         task.isTimerRunning = true
                                     }
                                 }
 
-                                tasks = tasksList.sortedWith(compareBy<Task> { it.isCompleted }.thenBy { it.id.toIntOrNull() ?: 0 })
+                                // Сортируем задачи: активный таймер в начале, затем по завершенности и ID
+                                tasks = tasksList.sortedWith(
+                                    compareBy<Task> { it.id != currentActiveTimer }
+                                        .thenBy { it.isCompleted }
+                                        .thenBy { it.id.toIntOrNull() ?: 0 }
+                                )
                                 println("Loaded ${tasksList.size} tasks")
+
+                                // Восстанавливаем активный таймер
+                                if (currentActiveTimer != null && tasks.any { it.id == currentActiveTimer }) {
+                                    activeTimer = currentActiveTimer
+                                    timerSeconds = currentTimerSeconds
+                                }
 
                                 if (tasksList.isEmpty()) {
                                     // Попробуем альтернативный запрос без фильтров
@@ -314,7 +282,11 @@ class MainViewModel : ViewModel() {
                                         processTasks(tasksData, tasksList)
 
                                         if (tasksList.isNotEmpty()) {
-                                            tasks = tasksList.sortedWith(compareBy<Task> { it.isCompleted }.thenBy { it.id.toIntOrNull() ?: 0 })
+                                            tasks = tasksList.sortedWith(
+                                                compareBy<Task> { it.id != activeTimer }
+                                                    .thenBy { it.isCompleted }
+                                                    .thenBy { it.id.toIntOrNull() ?: 0 }
+                                            )
                                             errorMessage = null
                                             println("Successfully loaded ${tasksList.size} tasks from simple method")
                                         } else {
@@ -378,7 +350,11 @@ class MainViewModel : ViewModel() {
                                         processTasks(tasksData, tasksList)
 
                                         if (tasksList.isNotEmpty()) {
-                                            tasks = tasksList.sortedWith(compareBy<Task> { it.isCompleted }.thenBy { it.id.toIntOrNull() ?: 0 })
+                                            tasks = tasksList.sortedWith(
+                                                compareBy<Task> { it.id != activeTimer }
+                                                    .thenBy { it.isCompleted }
+                                                    .thenBy { it.id.toIntOrNull() ?: 0 }
+                                            )
                                             errorMessage = null
                                             println("Successfully loaded ${tasksList.size} tasks from alternative method")
                                         }
@@ -425,52 +401,102 @@ class MainViewModel : ViewModel() {
             description = taskJson.optString("description", taskJson.optString("DESCRIPTION", "")),
             timeSpent = timeSpent,
             timeEstimate = taskJson.optInt("timeEstimate", taskJson.optInt("TIME_ESTIMATE", 7200)),
-            status = taskJson.optString("status", taskJson.optString("STATUS", "")),
-            createdDate = taskJson.optString("createdDate", taskJson.optString("CREATED_DATE", "")),
-            deadline = taskJson.optString("deadline", taskJson.optString("DEADLINE", ""))
+            status = taskJson.optString("status", taskJson.optString("STATUS", ""))
         )
     }
 
     fun toggleTimer(task: Task) {
-        val currentTimerState = getCurrentTimerState()
-
-        if (currentTimerState.activeTaskId == task.id) {
+        if (activeTimer == task.id) {
             // Остановить таймер и записать время в Битрикс
             stopTimerAndSaveTime(task)
-            currentTimerState.activeTaskId = null
+            if (sendComments) {
+                sendTimerComment(task, "Таймер остановлен")
+            }
+            activeTimer = null
             tasks = tasks.map { if (it.id == task.id) it.copy(isTimerRunning = false) else it }
         } else {
             // Сначала останавливаем предыдущий таймер, если есть
-            currentTimerState.activeTaskId?.let { currentTaskId ->
+            activeTimer?.let { currentTaskId ->
                 val currentTask = tasks.find { it.id == currentTaskId }
-                currentTask?.let { stopTimerAndSaveTime(it) }
+                currentTask?.let {
+                    stopTimerAndSaveTime(it)
+                    if (sendComments) {
+                        sendTimerComment(it, "Таймер остановлен")
+                    }
+                }
             }
 
             // Проверяем, есть ли приостановленный таймер для этой задачи
-            if (currentTimerState.pausedTaskId == task.id) {
+            if (pausedTimerTaskId == task.id) {
                 // Возобновляем приостановленный таймер
-                currentTimerState.timerSeconds = currentTimerState.pausedSeconds
-                currentTimerState.pausedTaskId = null
-                currentTimerState.pausedSeconds = 0
-                currentTimerState.isTimerPaused = false
+                timerSeconds = pausedTimerSeconds
+                pausedTimerTaskId = null
+                pausedTimerSeconds = 0
+                isTimerPaused = false
+                if (sendComments) {
+                    sendTimerComment(task, "Таймер возобновлен")
+                }
             } else {
                 // Запускаем новый таймер
-                currentTimerState.timerSeconds = 0
+                timerSeconds = 0
+                if (sendComments) {
+                    sendTimerComment(task, "Таймер запущен")
+                }
             }
 
             // Запустить новый таймер
             tasks = tasks.map { it.copy(isTimerRunning = false) }
-            currentTimerState.activeTaskId = task.id
+            activeTimer = task.id
             tasks = tasks.map { if (it.id == task.id) it.copy(isTimerRunning = true) else it }
+
+            // Перемещаем задачу с активным таймером в начало списка
+            tasks = tasks.sortedWith(
+                compareBy<Task> { it.id != task.id }
+                    .thenBy { it.isCompleted }
+                    .thenBy { it.id.toIntOrNull() ?: 0 }
+            )
+
+            startTimer()
         }
+    }
+
+    // Отправка комментария о состоянии таймера
+    private fun sendTimerComment(task: Task, action: String) {
+        val user = users[currentUserIndex]
+        val url = "${user.webhookUrl}task.commentitem.add"
+
+        val commentText = "$action - ${user.name} (${formatTime(timerSeconds)})"
+
+        val formBody = FormBody.Builder()
+            .add("taskId", task.id)
+            .add("arFields[POST_MESSAGE]", commentText)
+            .add("arFields[AUTHOR_ID]", user.userId)
+            .build()
+
+        val request = Request.Builder()
+            .url(url)
+            .post(formBody)
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                println("Comment send error: ${e.message}")
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.body?.let { body ->
+                    val responseText = body.string()
+                    println("Comment response: $responseText")
+                }
+            }
+        })
     }
 
     // Сохранение времени в Битрикс при остановке таймера
     private fun stopTimerAndSaveTime(task: Task) {
-        val currentTimerState = getCurrentTimerState()
         // Сохраняем время только если прошло больше 10 секунд
-        if (currentTimerState.timerSeconds < 10) {
-            println("Timer too short (${currentTimerState.timerSeconds}s), not saving to Bitrix")
+        if (timerSeconds < 10) {
+            println("Timer too short (${timerSeconds}s), not saving to Bitrix")
             return
         }
 
@@ -480,8 +506,8 @@ class MainViewModel : ViewModel() {
         // Используем правильную структуру для task.elapseditem.add
         val formBody = FormBody.Builder()
             .add("taskId", task.id)
-            .add("arFields[SECONDS]", currentTimerState.timerSeconds.toString())
-            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(currentTimerState.timerSeconds)})")
+            .add("arFields[SECONDS]", timerSeconds.toString())
+            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(timerSeconds)})")
             .add("arFields[USER_ID]", user.userId)
             .build()
 
@@ -510,7 +536,7 @@ class MainViewModel : ViewModel() {
 
                                 // Пробуем упрощенный вариант
                                 println("Trying simplified parameters...")
-                                saveTimeSimplified(task, currentTimerState.timerSeconds)
+                                saveTimeSimplified(task)
                             } else if (json.has("result")) {
                                 // Успешно сохранено - обновляем задачи без уведомления
                                 delay(1000)
@@ -526,14 +552,14 @@ class MainViewModel : ViewModel() {
     }
 
     // Упрощенный способ сохранения времени без USER_ID
-    private fun saveTimeSimplified(task: Task, seconds: Int) {
+    private fun saveTimeSimplified(task: Task) {
         val user = users[currentUserIndex]
         val url = "${user.webhookUrl}task.elapseditem.add"
 
         val formBody = FormBody.Builder()
             .add("taskId", task.id)
-            .add("arFields[SECONDS]", seconds.toString())
-            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(seconds)})")
+            .add("arFields[SECONDS]", timerSeconds.toString())
+            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(timerSeconds)})")
             .build()
 
         val request = Request.Builder()
@@ -570,17 +596,43 @@ class MainViewModel : ViewModel() {
         })
     }
 
-    // Глобальный таймер, который работает для всех пользователей одновременно
-    private fun startGlobalTimer() {
-        viewModelScope.launch {
-            while (true) {
-                delay(1000)
-                // Обновляем таймеры для всех пользователей
-                userTimerStates.values.forEach { timerState ->
-                    if (timerState.activeTaskId != null) {
-                        timerState.timerSeconds++
-                    }
+    // Приостановка таймера на перерыв
+    private fun pauseTimer() {
+        activeTimer?.let { taskId ->
+            val task = tasks.find { it.id == taskId }
+            pausedTimerTaskId = taskId
+            pausedTimerSeconds = timerSeconds
+            isTimerPaused = true
+            activeTimer = null
+            timerSeconds = 0
+            tasks = tasks.map { it.copy(isTimerRunning = false) }
+
+            if (sendComments && task != null) {
+                sendTimerComment(task, "Таймер приостановлен")
+            }
+
+            println("Timer paused for task $taskId with ${pausedTimerSeconds}s")
+        }
+    }
+
+    // Возобновление таймера после перерыва
+    private fun resumeTimer() {
+        pausedTimerTaskId?.let { taskId ->
+            val task = tasks.find { it.id == taskId }
+            task?.let {
+                activeTimer = taskId
+                timerSeconds = pausedTimerSeconds
+                tasks = tasks.map { if (it.id == taskId) it.copy(isTimerRunning = true) else it }
+                pausedTimerTaskId = null
+                pausedTimerSeconds = 0
+                isTimerPaused = false
+
+                if (sendComments) {
+                    sendTimerComment(it, "Таймер возобновлен")
                 }
+
+                startTimer()
+                println("Timer resumed for task $taskId with ${timerSeconds}s")
             }
         }
     }
@@ -597,12 +649,14 @@ class MainViewModel : ViewModel() {
     }
 
     fun completeTask(task: Task) {
-        val currentTimerState = getCurrentTimerState()
         // Если есть активный таймер на этой задаче, сначала сохраняем время
-        if (currentTimerState.activeTaskId == task.id && currentTimerState.timerSeconds > 0) {
+        if (activeTimer == task.id && timerSeconds > 0) {
             stopTimerAndSaveTime(task)
-            currentTimerState.activeTaskId = null
-            currentTimerState.timerSeconds = 0
+            if (sendComments) {
+                sendTimerComment(task, "Задача завершена, таймер остановлен")
+            }
+            activeTimer = null
+            timerSeconds = 0
             tasks = tasks.map { it.copy(isTimerRunning = false) }
 
             // Ждем секунду, чтобы время сохранилось, потом завершаем задачу
@@ -651,6 +705,19 @@ class MainViewModel : ViewModel() {
         })
     }
 
+    fun toggleComments() {
+        sendComments = !sendComments
+    }
+
+    private fun startTimer() {
+        viewModelScope.launch {
+            while (activeTimer != null) {
+                delay(1000)
+                timerSeconds++
+            }
+        }
+    }
+
     private fun updateWorkStatus() {
         val calendar = Calendar.getInstance()
         val hour = calendar.get(Calendar.HOUR_OF_DAY)
@@ -668,38 +735,18 @@ class MainViewModel : ViewModel() {
             else -> WorkStatus.WORKING
         }
 
-        // Автоматическая пауза/возобновление таймера для ВСЕХ пользователей
+        // Автоматическая пауза/возобновление таймера
         if (previousStatus == WorkStatus.WORKING &&
             (workStatus == WorkStatus.BREAK || workStatus == WorkStatus.LUNCH)) {
-            // Переходим на перерыв - приостанавливаем таймеры всех пользователей
-            userTimerStates.values.forEach { timerState ->
-                if (timerState.activeTaskId != null) {
-                    timerState.pausedTaskId = timerState.activeTaskId
-                    timerState.pausedSeconds = timerState.timerSeconds
-                    timerState.isTimerPaused = true
-                    timerState.activeTaskId = null
-                    timerState.timerSeconds = 0
-                }
+            // Переходим на перерыв - приостанавливаем таймер
+            if (activeTimer != null) {
+                pauseTimer()
             }
-            // Обновляем UI для текущего пользователя
-            tasks = tasks.map { it.copy(isTimerRunning = false) }
         } else if ((previousStatus == WorkStatus.BREAK || previousStatus == WorkStatus.LUNCH) &&
             workStatus == WorkStatus.WORKING) {
-            // Возвращаемся с перерыва - возобновляем таймеры всех пользователей
-            userTimerStates.values.forEach { timerState ->
-                if (timerState.pausedTaskId != null) {
-                    timerState.activeTaskId = timerState.pausedTaskId
-                    timerState.timerSeconds = timerState.pausedSeconds
-                    timerState.pausedTaskId = null
-                    timerState.pausedSeconds = 0
-                    timerState.isTimerPaused = false
-                }
-            }
-            // Обновляем UI для текущего пользователя
-            val currentTimerState = getCurrentTimerState()
-            tasks = tasks.map {
-                if (it.id == currentTimerState.activeTaskId) it.copy(isTimerRunning = true)
-                else it.copy(isTimerRunning = false)
+            // Возвращаемся с перерыва - возобновляем таймер
+            if (pausedTimerTaskId != null) {
+                resumeTimer()
             }
         }
     }
@@ -717,8 +764,21 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             while (true) {
                 delay(300000) // каждые 5 минут
-                // Обновляем задачи без сброса состояния таймеров
+                // Сохраняем состояние таймера перед обновлением задач
+                val savedActiveTimer = activeTimer
+                val savedTimerSeconds = timerSeconds
+                val savedPausedTaskId = pausedTimerTaskId
+                val savedPausedSeconds = pausedTimerSeconds
+                val savedIsPaused = isTimerPaused
+
                 loadTasks()
+
+                // Восстанавливаем состояние таймера после загрузки
+                activeTimer = savedActiveTimer
+                timerSeconds = savedTimerSeconds
+                pausedTimerTaskId = savedPausedTaskId
+                pausedTimerSeconds = savedPausedSeconds
+                isTimerPaused = savedIsPaused
             }
         }
     }
@@ -740,55 +800,6 @@ class MainViewModel : ViewModel() {
         currentTime = String.format("%02d:%02d:%02d", hour, minute, second)
     }
 
-    private fun loadUserPhotos() {
-        users.forEachIndexed { index, user ->
-            // Используем user.current для получения информации о пользователе
-            val url = "${user.webhookUrl}user.current"
-
-            val request = Request.Builder().url(url).build()
-
-            client.newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    println("Failed to load photo for user ${user.name}: ${e.message}")
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    if (response.isSuccessful) {
-                        response.body?.let { body ->
-                            try {
-                                val responseText = body.string()
-                                println("User.current response for ${user.name}: $responseText")
-                                val json = JSONObject(responseText)
-
-                                if (json.has("result")) {
-                                    val userInfo = json.getJSONObject("result")
-                                    val photoPath = userInfo.optString("PERSONAL_PHOTO", "")
-
-                                    if (photoPath.isNotEmpty()) {
-                                        // Формируем полный URL: берем домен из webhookUrl и добавляем путь к фото
-                                        val baseUrl = user.webhookUrl.substringBefore("/rest/")
-                                        val fullPhotoUrl = "$baseUrl$photoPath"
-
-                                        // Обновляем пользователя с URL фотографии
-                                        users.getOrNull(index)?.photoUrl = fullPhotoUrl
-                                        println("Updated photo for ${user.name}: $fullPhotoUrl")
-                                    } else {
-                                        println("No photo found for ${user.name}")
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                println("Error parsing user info for ${user.name}: ${e.message}")
-                                e.printStackTrace()
-                            }
-                        }
-                    } else {
-                        println("HTTP error for ${user.name}: ${response.code}")
-                    }
-                }
-            })
-        }
-    }
-
     fun getCurrentUser() = users[currentUserIndex]
 }
 
@@ -808,13 +819,14 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var isUserMenuExpanded by remember { mutableStateOf(false) }
+    var isSettingsExpanded by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // Верхняя панель: пользователь, время, статус работы
+        // Верхняя панель: пользователь, время, статус работы, настройки
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -864,8 +876,46 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 color = MaterialTheme.colorScheme.primary
             )
 
-            // Иконка статуса работы
-            WorkStatusIcon(workStatus = viewModel.workStatus)
+            // Меню настроек и иконка статуса работы
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Кнопка настроек
+                Box {
+                    IconButton(
+                        onClick = { isSettingsExpanded = true }
+                    ) {
+                        Text("⚙️", fontSize = 20.sp)
+                    }
+
+                    DropdownMenu(
+                        expanded = isSettingsExpanded,
+                        onDismissRequest = { isSettingsExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (viewModel.sendComments) "✓ " else "   ",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text("Отправлять комментарии")
+                                }
+                            },
+                            onClick = {
+                                viewModel.toggleComments()
+                                isSettingsExpanded = false
+                            }
+                        )
+                    }
+                }
+
+                // Иконка статуса работы
+                WorkStatusIcon(workStatus = viewModel.workStatus)
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -992,11 +1042,11 @@ fun UserAvatar(user: User, size: Int) {
         modifier = Modifier
             .size(size.dp)
             .clip(CircleShape)
-            .background(Color(0xFF8D6E63)), // Коричневый некрасивый цвет
+            .background(Color(0xFF8D6E63)), // Коричневый цвет
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = user.avatar, // Теперь это инициалы
+            text = user.avatar, // Инициалы
             fontSize = (size * 0.4).sp,
             fontWeight = FontWeight.Bold,
             color = Color.White,
@@ -1235,112 +1285,6 @@ fun TaskCard(
                                         task.progressPercent >= 80 -> Color(0xFFFF9800)
                                         else -> Color(0xFF4CAF50)
                                     }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Информация о датах
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F5F5))
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp)
-                    ) {
-                        Text(
-                            text = "📅 Даты",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column {
-                                Text(
-                                    text = "Создано:",
-                                    fontSize = 12.sp,
-                                    color = Color.Gray
-                                )
-                                Text(
-                                    text = task.formattedCreatedDate,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            Column {
-                                Text(
-                                    text = "Дедлайн:",
-                                    fontSize = 12.sp,
-                                    color = Color.Gray
-                                )
-                                Text(
-                                    text = task.formattedDeadline,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (task.formattedDeadline != "Не указан") {
-                                        // Можно добавить логику проверки просроченности
-                                        Color(0xFFFF5722)
-                                    } else {
-                                        Color.Gray
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Техническая информация
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F5F5))
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp)
-                    ) {
-                        Text(
-                            text = "🔧 Техническая информация",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column {
-                                Text(
-                                    text = "ID задачи:",
-                                    fontSize = 12.sp,
-                                    color = Color.Gray
-                                )
-                                Text(
-                                    text = task.id,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            Column {
-                                Text(
-                                    text = "Статус код:",
-                                    fontSize = 12.sp,
-                                    color = Color.Gray
-                                )
-                                Text(
-                                    text = task.status,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }
