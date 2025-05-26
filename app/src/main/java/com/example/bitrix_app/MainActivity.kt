@@ -82,6 +82,12 @@ data class Task(
 
 enum class WorkStatus { BEFORE_WORK, WORKING, BREAK, LUNCH, AFTER_WORK }
 
+data class ChecklistItem(
+    val id: String,
+    val title: String,
+    val isComplete: Boolean
+)
+
 // Данные состояния таймера для одного пользователя
 data class UserTimerData(
     val activeTimerId: String? = null,
@@ -112,6 +118,17 @@ class MainViewModel : ViewModel() {
 
     // Состояние таймеров для всех пользователей
     private var userTimerDataMap by mutableStateOf<Map<String, UserTimerData>>(emptyMap())
+
+    // Состояния для чек-листов и подзадач
+    var checklistsMap by mutableStateOf<Map<String, List<ChecklistItem>>>(emptyMap())
+        private set
+    var subtasksMap by mutableStateOf<Map<String, List<Task>>>(emptyMap())
+        private set
+    var loadingChecklistMap by mutableStateOf<Map<String, Boolean>>(emptyMap())
+        private set
+    var loadingSubtasksMap by mutableStateOf<Map<String, Boolean>>(emptyMap())
+        private set
+
 
     // Вспомогательная функция для получения данных таймера текущего пользователя
     fun getCurrentUserTimerData(): UserTimerData {
@@ -418,6 +435,110 @@ class MainViewModel : ViewModel() {
             status = taskJson.optString("status", taskJson.optString("STATUS", ""))
         )
     }
+
+    fun fetchChecklistForTask(taskId: String) {
+        val user = users[currentUserIndex] // Используем текущего пользователя для API вызова
+        loadingChecklistMap = loadingChecklistMap + (taskId to true)
+        val url = "${user.webhookUrl}task.checklistitem.getlist?taskId=$taskId"
+        val request = Request.Builder().url(url).build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                viewModelScope.launch {
+                    loadingChecklistMap = loadingChecklistMap - taskId
+                    // Можно добавить обработку ошибки, например, в errorMessage
+                    println("Failed to fetch checklist for task $taskId: ${e.message}")
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                viewModelScope.launch {
+                    loadingChecklistMap = loadingChecklistMap - taskId
+                    if (response.isSuccessful) {
+                        response.body?.let { body ->
+                            try {
+                                val responseText = body.string()
+                                println("Checklist response for task $taskId: $responseText")
+                                val json = JSONObject(responseText)
+                                if (json.has("result")) {
+                                    val itemsArray = json.getJSONArray("result")
+                                    val itemsList = mutableListOf<ChecklistItem>()
+                                    for (i in 0 until itemsArray.length()) {
+                                        val itemJson = itemsArray.getJSONObject(i)
+                                        itemsList.add(
+                                            ChecklistItem(
+                                                id = itemJson.getString("ID"),
+                                                title = itemJson.getString("TITLE"),
+                                                isComplete = itemJson.getString("IS_COMPLETE") == "Y"
+                                            )
+                                        )
+                                    }
+                                    checklistsMap = checklistsMap + (taskId to itemsList)
+                                }
+                            } catch (e: Exception) {
+                                println("Error parsing checklist for task $taskId: ${e.message}")
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    fun fetchSubtasksForTask(taskId: String) {
+        val user = users[currentUserIndex]
+        loadingSubtasksMap = loadingSubtasksMap + (taskId to true)
+        // Запрашиваем основные поля для подзадач
+        val url = "${user.webhookUrl}tasks.task.list" +
+                "?filter[PARENT_ID]=$taskId" +
+                "&select[]=ID" +
+                "&select[]=TITLE" +
+                "&select[]=DESCRIPTION" +
+                "&select[]=TIME_SPENT_IN_LOGS" +
+                "&select[]=TIME_ESTIMATE" +
+                "&select[]=STATUS"
+
+        val request = Request.Builder().url(url).build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                viewModelScope.launch {
+                    loadingSubtasksMap = loadingSubtasksMap - taskId
+                    println("Failed to fetch subtasks for task $taskId: ${e.message}")
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                viewModelScope.launch {
+                    loadingSubtasksMap = loadingSubtasksMap - taskId
+                    if (response.isSuccessful) {
+                        response.body?.let { body ->
+                            try {
+                                val responseText = body.string()
+                                println("Subtasks response for task $taskId: $responseText")
+                                val json = JSONObject(responseText)
+                                val subtasksList = mutableListOf<Task>()
+                                if (json.has("result")) {
+                                    val result = json.get("result")
+                                     // processTasks ожидает, что задачи могут быть в result.tasks или просто в result
+                                    val tasksDataToProcess = if (result is JSONObject && result.has("tasks")) {
+                                        result.get("tasks")
+                                    } else {
+                                        result
+                                    }
+                                    processTasks(tasksDataToProcess, subtasksList)
+                                }
+                                subtasksMap = subtasksMap + (taskId to subtasksList)
+                            } catch (e: Exception) {
+                                println("Error parsing subtasks for task $taskId: ${e.message}")
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
 
     fun toggleTimer(task: Task) {
         val currentUserData = getCurrentUserTimerData()
@@ -1109,9 +1230,22 @@ fun TaskCard(
     onCompleteTask: (Task) -> Unit,
     isTimerRunningForThisTask: Boolean,
     isTimerUserPausedForThisTask: Boolean,
-    isTimerSystemPausedForThisTask: Boolean
+    isTimerSystemPausedForThisTask: Boolean,
+    viewModel: MainViewModel // Передаем ViewModel для доступа к данным и функциям
 ) {
     var isExpanded by remember { mutableStateOf(false) }
+
+    // Загрузка чек-листов и подзадач при раскрытии карточки
+    LaunchedEffect(task.id, isExpanded) {
+        if (isExpanded) {
+            if (viewModel.checklistsMap[task.id] == null && viewModel.loadingChecklistMap[task.id] != true) {
+                viewModel.fetchChecklistForTask(task.id)
+            }
+            if (viewModel.subtasksMap[task.id] == null && viewModel.loadingSubtasksMap[task.id] != true) {
+                viewModel.fetchSubtasksForTask(task.id)
+            }
+        }
+    }
 
     Card(
         modifier = Modifier
@@ -1319,6 +1453,71 @@ fun TaskCard(
                             }
                         }
                     }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Чек-листы
+                val checklist = viewModel.checklistsMap[task.id]
+                val isLoadingChecklist = viewModel.loadingChecklistMap[task.id] == true
+                if (isLoadingChecklist) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                } else if (!checklist.isNullOrEmpty()) {
+                    Text(
+                        text = "Чек-лист:",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    checklist.forEach { item ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = item.isComplete,
+                                onCheckedChange = null, // Пока только отображение
+                                enabled = false,
+                                colors = CheckboxDefaults.colors(
+                                    disabledCheckedColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                    disabledUncheckedColor = Color.Gray.copy(alpha = 0.5f)
+                                )
+                            )
+                            Text(
+                                text = item.title,
+                                fontSize = 14.sp,
+                                color = if (item.isComplete) Color.Gray else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
+                // Подзадачи
+                val subtasks = viewModel.subtasksMap[task.id]
+                val isLoadingSubtasks = viewModel.loadingSubtasksMap[task.id] == true
+                if (isLoadingSubtasks) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                } else if (!subtasks.isNullOrEmpty()) {
+                    Text(
+                        text = "Подзадачи:",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    subtasks.forEach { subtask ->
+                        // Можно сделать более сложную карточку для подзадачи, но пока просто текст
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.LightGray.copy(alpha = 0.2f))
+                        ) {
+                            Text(
+                                text = subtask.title,
+                                fontSize = 14.sp,
+                                modifier = Modifier.padding(8.dp),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
 
