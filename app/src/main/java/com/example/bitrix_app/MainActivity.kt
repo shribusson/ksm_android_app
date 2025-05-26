@@ -10,11 +10,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.clickable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,7 +41,21 @@ import java.io.IOException
 import java.util.*
 
 // Модели данных
-data class User(val name: String, val webhookUrl: String, val userId: String, val avatar: String, var photoUrl: String = "")
+data class User(
+    val name: String,
+    val webhookUrl: String,
+    val userId: String,
+    val avatar: String,
+    var photoUrl: String = ""
+)
+
+data class UserTimerState(
+    var activeTaskId: String? = null,
+    var timerSeconds: Int = 0,
+    var pausedTaskId: String? = null,
+    var pausedSeconds: Int = 0,
+    var isTimerPaused: Boolean = false
+)
 
 data class Task(
     val id: String,
@@ -124,35 +138,38 @@ class MainViewModel : ViewModel() {
     var isLoading by mutableStateOf(false)
     var errorMessage by mutableStateOf<String?>(null)
 
-    // Состояние таймера
-    var activeTimer by mutableStateOf<String?>(null)
-    var timerSeconds by mutableStateOf(0)
-    var pausedTimerTaskId by mutableStateOf<String?>(null) // ID задачи с приостановленным таймером
-    var pausedTimerSeconds by mutableStateOf(0) // Время приостановленного таймера
-    var isTimerPaused by mutableStateOf(false) // Флаг паузы таймера
+    // Состояние таймеров для каждого пользователя
+    private val userTimerStates = mutableMapOf<String, UserTimerState>()
     var currentTime by mutableStateOf("")
 
+    // Инициализация состояний таймеров для всех пользователей
     init {
+        users.forEach { user ->
+            userTimerStates[user.userId] = UserTimerState()
+        }
         updateWorkStatus()
         loadTasks()
         startPeriodicUpdates()
         startPeriodicTaskUpdates()
         startTimeUpdates()
         loadUserPhotos()
+        startGlobalTimer()
     }
 
-    fun switchUser(index: Int) {
-        // Останавливаем активный таймер при смене пользователя и сохраняем время
-        activeTimer?.let { taskId ->
-            val currentTask = tasks.find { it.id == taskId }
-            currentTask?.let { stopTimerAndSaveTime(it) }
-        }
-        activeTimer = null
-        timerSeconds = 0
-        pausedTimerTaskId = null
-        pausedTimerSeconds = 0
-        isTimerPaused = false
+    // Получение текущего состояния таймера
+    private fun getCurrentTimerState(): UserTimerState {
+        return userTimerStates[users[currentUserIndex].userId] ?: UserTimerState()
+    }
 
+    // Геттеры для UI (работают с текущим пользователем)
+    val activeTimer: String? get() = getCurrentTimerState().activeTaskId
+    val timerSeconds: Int get() = getCurrentTimerState().timerSeconds
+    val pausedTimerTaskId: String? get() = getCurrentTimerState().pausedTaskId
+    val pausedTimerSeconds: Int get() = getCurrentTimerState().pausedSeconds
+    val isTimerPaused: Boolean get() = getCurrentTimerState().isTimerPaused
+
+    fun switchUser(index: Int) {
+        // Просто переключаем пользователя, таймеры продолжают работать независимо
         currentUserIndex = index
         loadTasks()
     }
@@ -161,10 +178,6 @@ class MainViewModel : ViewModel() {
         isLoading = true
         errorMessage = null
         val user = users[currentUserIndex]
-
-        // Сохраняем состояние активного таймера перед загрузкой
-        val currentActiveTimer = activeTimer
-        val currentTimerSeconds = timerSeconds
 
         // Получаем ВСЕ задачи пользователя без фильтрации по статусу
         val url = "${user.webhookUrl}tasks.task.list" +
@@ -234,21 +247,16 @@ class MainViewModel : ViewModel() {
                                     }
                                 }
 
-                                // Восстанавливаем состояние таймера после загрузки
+                                // Восстанавливаем состояние таймера для текущего пользователя
+                                val currentTimerState = getCurrentTimerState()
                                 tasksList.forEach { task ->
-                                    if (task.id == currentActiveTimer) {
+                                    if (task.id == currentTimerState.activeTaskId) {
                                         task.isTimerRunning = true
                                     }
                                 }
 
                                 tasks = tasksList.sortedWith(compareBy<Task> { it.isCompleted }.thenBy { it.id.toIntOrNull() ?: 0 })
                                 println("Loaded ${tasksList.size} tasks")
-
-                                // Восстанавливаем активный таймер
-                                if (currentActiveTimer != null && tasks.any { it.id == currentActiveTimer }) {
-                                    activeTimer = currentActiveTimer
-                                    timerSeconds = currentTimerSeconds
-                                }
 
                                 if (tasksList.isEmpty()) {
                                     // Попробуем альтернативный запрос без фильтров
@@ -424,43 +432,45 @@ class MainViewModel : ViewModel() {
     }
 
     fun toggleTimer(task: Task) {
-        if (activeTimer == task.id) {
+        val currentTimerState = getCurrentTimerState()
+
+        if (currentTimerState.activeTaskId == task.id) {
             // Остановить таймер и записать время в Битрикс
             stopTimerAndSaveTime(task)
-            activeTimer = null
+            currentTimerState.activeTaskId = null
             tasks = tasks.map { if (it.id == task.id) it.copy(isTimerRunning = false) else it }
         } else {
             // Сначала останавливаем предыдущий таймер, если есть
-            activeTimer?.let { currentTaskId ->
+            currentTimerState.activeTaskId?.let { currentTaskId ->
                 val currentTask = tasks.find { it.id == currentTaskId }
                 currentTask?.let { stopTimerAndSaveTime(it) }
             }
 
             // Проверяем, есть ли приостановленный таймер для этой задачи
-            if (pausedTimerTaskId == task.id) {
+            if (currentTimerState.pausedTaskId == task.id) {
                 // Возобновляем приостановленный таймер
-                timerSeconds = pausedTimerSeconds
-                pausedTimerTaskId = null
-                pausedTimerSeconds = 0
-                isTimerPaused = false
+                currentTimerState.timerSeconds = currentTimerState.pausedSeconds
+                currentTimerState.pausedTaskId = null
+                currentTimerState.pausedSeconds = 0
+                currentTimerState.isTimerPaused = false
             } else {
                 // Запускаем новый таймер
-                timerSeconds = 0
+                currentTimerState.timerSeconds = 0
             }
 
             // Запустить новый таймер
             tasks = tasks.map { it.copy(isTimerRunning = false) }
-            activeTimer = task.id
+            currentTimerState.activeTaskId = task.id
             tasks = tasks.map { if (it.id == task.id) it.copy(isTimerRunning = true) else it }
-            startTimer()
         }
     }
 
     // Сохранение времени в Битрикс при остановке таймера
     private fun stopTimerAndSaveTime(task: Task) {
+        val currentTimerState = getCurrentTimerState()
         // Сохраняем время только если прошло больше 10 секунд
-        if (timerSeconds < 10) {
-            println("Timer too short (${timerSeconds}s), not saving to Bitrix")
+        if (currentTimerState.timerSeconds < 10) {
+            println("Timer too short (${currentTimerState.timerSeconds}s), not saving to Bitrix")
             return
         }
 
@@ -470,8 +480,8 @@ class MainViewModel : ViewModel() {
         // Используем правильную структуру для task.elapseditem.add
         val formBody = FormBody.Builder()
             .add("taskId", task.id)
-            .add("arFields[SECONDS]", timerSeconds.toString())
-            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(timerSeconds)})")
+            .add("arFields[SECONDS]", currentTimerState.timerSeconds.toString())
+            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(currentTimerState.timerSeconds)})")
             .add("arFields[USER_ID]", user.userId)
             .build()
 
@@ -500,7 +510,7 @@ class MainViewModel : ViewModel() {
 
                                 // Пробуем упрощенный вариант
                                 println("Trying simplified parameters...")
-                                saveTimeSimplified(task)
+                                saveTimeSimplified(task, currentTimerState.timerSeconds)
                             } else if (json.has("result")) {
                                 // Успешно сохранено - обновляем задачи без уведомления
                                 delay(1000)
@@ -516,14 +526,14 @@ class MainViewModel : ViewModel() {
     }
 
     // Упрощенный способ сохранения времени без USER_ID
-    private fun saveTimeSimplified(task: Task) {
+    private fun saveTimeSimplified(task: Task, seconds: Int) {
         val user = users[currentUserIndex]
         val url = "${user.webhookUrl}task.elapseditem.add"
 
         val formBody = FormBody.Builder()
             .add("taskId", task.id)
-            .add("arFields[SECONDS]", timerSeconds.toString())
-            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(timerSeconds)})")
+            .add("arFields[SECONDS]", seconds.toString())
+            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(seconds)})")
             .build()
 
         val request = Request.Builder()
@@ -560,32 +570,17 @@ class MainViewModel : ViewModel() {
         })
     }
 
-    // Приостановка таймера на перерыв
-    private fun pauseTimer() {
-        activeTimer?.let { taskId ->
-            pausedTimerTaskId = taskId
-            pausedTimerSeconds = timerSeconds
-            isTimerPaused = true
-            activeTimer = null
-            timerSeconds = 0
-            tasks = tasks.map { it.copy(isTimerRunning = false) }
-            println("Timer paused for task $taskId with ${pausedTimerSeconds}s")
-        }
-    }
-
-    // Возобновление таймера после перерыва
-    private fun resumeTimer() {
-        pausedTimerTaskId?.let { taskId ->
-            val task = tasks.find { it.id == taskId }
-            task?.let {
-                activeTimer = taskId
-                timerSeconds = pausedTimerSeconds
-                tasks = tasks.map { if (it.id == taskId) it.copy(isTimerRunning = true) else it }
-                pausedTimerTaskId = null
-                pausedTimerSeconds = 0
-                isTimerPaused = false
-                startTimer()
-                println("Timer resumed for task $taskId with ${timerSeconds}s")
+    // Глобальный таймер, который работает для всех пользователей одновременно
+    private fun startGlobalTimer() {
+        viewModelScope.launch {
+            while (true) {
+                delay(1000)
+                // Обновляем таймеры для всех пользователей
+                userTimerStates.values.forEach { timerState ->
+                    if (timerState.activeTaskId != null) {
+                        timerState.timerSeconds++
+                    }
+                }
             }
         }
     }
@@ -602,11 +597,12 @@ class MainViewModel : ViewModel() {
     }
 
     fun completeTask(task: Task) {
+        val currentTimerState = getCurrentTimerState()
         // Если есть активный таймер на этой задаче, сначала сохраняем время
-        if (activeTimer == task.id && timerSeconds > 0) {
+        if (currentTimerState.activeTaskId == task.id && currentTimerState.timerSeconds > 0) {
             stopTimerAndSaveTime(task)
-            activeTimer = null
-            timerSeconds = 0
+            currentTimerState.activeTaskId = null
+            currentTimerState.timerSeconds = 0
             tasks = tasks.map { it.copy(isTimerRunning = false) }
 
             // Ждем секунду, чтобы время сохранилось, потом завершаем задачу
@@ -655,15 +651,6 @@ class MainViewModel : ViewModel() {
         })
     }
 
-    private fun startTimer() {
-        viewModelScope.launch {
-            while (activeTimer != null) {
-                delay(1000)
-                timerSeconds++
-            }
-        }
-    }
-
     private fun updateWorkStatus() {
         val calendar = Calendar.getInstance()
         val hour = calendar.get(Calendar.HOUR_OF_DAY)
@@ -681,18 +668,38 @@ class MainViewModel : ViewModel() {
             else -> WorkStatus.WORKING
         }
 
-        // Автоматическая пауза/возобновление таймера
+        // Автоматическая пауза/возобновление таймера для ВСЕХ пользователей
         if (previousStatus == WorkStatus.WORKING &&
             (workStatus == WorkStatus.BREAK || workStatus == WorkStatus.LUNCH)) {
-            // Переходим на перерыв - приостанавливаем таймер
-            if (activeTimer != null) {
-                pauseTimer()
+            // Переходим на перерыв - приостанавливаем таймеры всех пользователей
+            userTimerStates.values.forEach { timerState ->
+                if (timerState.activeTaskId != null) {
+                    timerState.pausedTaskId = timerState.activeTaskId
+                    timerState.pausedSeconds = timerState.timerSeconds
+                    timerState.isTimerPaused = true
+                    timerState.activeTaskId = null
+                    timerState.timerSeconds = 0
+                }
             }
+            // Обновляем UI для текущего пользователя
+            tasks = tasks.map { it.copy(isTimerRunning = false) }
         } else if ((previousStatus == WorkStatus.BREAK || previousStatus == WorkStatus.LUNCH) &&
             workStatus == WorkStatus.WORKING) {
-            // Возвращаемся с перерыва - возобновляем таймер
-            if (pausedTimerTaskId != null) {
-                resumeTimer()
+            // Возвращаемся с перерыва - возобновляем таймеры всех пользователей
+            userTimerStates.values.forEach { timerState ->
+                if (timerState.pausedTaskId != null) {
+                    timerState.activeTaskId = timerState.pausedTaskId
+                    timerState.timerSeconds = timerState.pausedSeconds
+                    timerState.pausedTaskId = null
+                    timerState.pausedSeconds = 0
+                    timerState.isTimerPaused = false
+                }
+            }
+            // Обновляем UI для текущего пользователя
+            val currentTimerState = getCurrentTimerState()
+            tasks = tasks.map {
+                if (it.id == currentTimerState.activeTaskId) it.copy(isTimerRunning = true)
+                else it.copy(isTimerRunning = false)
             }
         }
     }
@@ -710,21 +717,8 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             while (true) {
                 delay(300000) // каждые 5 минут
-                // Сохраняем состояние таймера перед обновлением задач
-                val savedActiveTimer = activeTimer
-                val savedTimerSeconds = timerSeconds
-                val savedPausedTaskId = pausedTimerTaskId
-                val savedPausedSeconds = pausedTimerSeconds
-                val savedIsPaused = isTimerPaused
-
+                // Обновляем задачи без сброса состояния таймеров
                 loadTasks()
-
-                // Восстанавливаем состояние таймера после загрузки
-                activeTimer = savedActiveTimer
-                timerSeconds = savedTimerSeconds
-                pausedTimerTaskId = savedPausedTaskId
-                pausedTimerSeconds = savedPausedSeconds
-                isTimerPaused = savedIsPaused
             }
         }
     }
