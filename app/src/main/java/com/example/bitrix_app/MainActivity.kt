@@ -539,6 +539,56 @@ class MainViewModel : ViewModel() {
         })
     }
 
+    fun toggleChecklistItemStatus(taskId: String, checklistItemId: String, currentIsComplete: Boolean) {
+        val user = users[currentUserIndex]
+        val action = if (currentIsComplete) "tasks.checklistitem.renew" else "tasks.checklistitem.complete"
+        val url = "${user.webhookUrl}$action"
+
+        val formBody = FormBody.Builder()
+            .add("TASKID", taskId)
+            .add("ITEMID", checklistItemId)
+            .build()
+
+        val request = Request.Builder()
+            .url(url)
+            .post(formBody)
+            .build()
+
+        // Оптимистичное обновление UI
+        val oldChecklist = checklistsMap[taskId] ?: emptyList()
+        val updatedChecklist = oldChecklist.map {
+            if (it.id == checklistItemId) it.copy(isComplete = !currentIsComplete) else it
+        }
+        checklistsMap = checklistsMap + (taskId to updatedChecklist)
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                viewModelScope.launch {
+                    println("Failed to toggle checklist item $checklistItemId for task $taskId: ${e.message}")
+                    // Откатываем изменение в случае ошибки
+                    checklistsMap = checklistsMap + (taskId to oldChecklist)
+                    // Можно добавить сообщение об ошибке для пользователя
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                viewModelScope.launch {
+                    if (!response.isSuccessful) {
+                        println("Error toggling checklist item $checklistItemId for task $taskId: ${response.code}")
+                        // Откатываем изменение в случае ошибки от сервера
+                        checklistsMap = checklistsMap + (taskId to oldChecklist)
+                    } else {
+                        // Если успешно, данные уже оптимистично обновлены.
+                        // Можно дополнительно перезапросить чек-лист для полной синхронизации, если необходимо.
+                        // fetchChecklistForTask(taskId) // Раскомментировать, если нужна полная синхронизация
+                        println("Successfully toggled checklist item $checklistItemId for task $taskId. New state: ${!currentIsComplete}")
+                    }
+                    response.body?.close()
+                }
+            }
+        })
+    }
+
 
     fun toggleTimer(task: Task) {
         val currentUserData = getCurrentUserTimerData()
@@ -1471,14 +1521,21 @@ fun TaskCard(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     checklist.forEach { item ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable {
+                                viewModel.toggleChecklistItemStatus(task.id, item.id, item.isComplete)
+                            }
+                        ) {
                             Checkbox(
                                 checked = item.isComplete,
-                                onCheckedChange = null, // Пока только отображение
-                                enabled = false,
+                                onCheckedChange = { // newCheckedState -> // Эта лямбда теперь не нужна, т.к. есть clickable на Row
+                                    viewModel.toggleChecklistItemStatus(task.id, item.id, item.isComplete)
+                                },
+                                enabled = true, // Делаем чекбокс активным
                                 colors = CheckboxDefaults.colors(
-                                    disabledCheckedColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                                    disabledUncheckedColor = Color.Gray.copy(alpha = 0.5f)
+                                    checkedColor = MaterialTheme.colorScheme.primary,
+                                    uncheckedColor = Color.Gray
                                 )
                             )
                             Text(
