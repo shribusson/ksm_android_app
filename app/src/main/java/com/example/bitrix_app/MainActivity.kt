@@ -1176,7 +1176,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     onCompleteTask = { viewModel.completeTask(it) },
                     isTimerRunningForThisTask = isTaskActive,
                     isTimerUserPausedForThisTask = isTaskUserPaused,
-                    isTimerSystemPausedForThisTask = isTaskSystemPaused
+                    isTimerSystemPausedForThisTask = isTaskSystemPaused,
+                    viewModel = viewModel // Передаем ViewModel в TaskCard
                 )
                 Spacer(modifier = Modifier.height(8.dp))
             }
