@@ -123,12 +123,8 @@ class MainViewModel : ViewModel() {
     private fun updateCurrentUserTimerData(data: UserTimerData) {
         val userId = users[currentUserIndex].userId
         userTimerDataMap = userTimerDataMap + (userId to data)
-        // Обновляем tasks, чтобы отразить isTimerRunning для UI
-        val currentData = getCurrentUserTimerData()
-        tasks = tasks.map { task ->
-            task.copy(/*isTimerRunning = task.id == currentData.activeTimerId && !currentData.isPausedForUserAction && !currentData.isSystemPaused*/)
-            // isTimerRunning убрали из Task, теперь это вычисляется в UI
-        }
+        // Обновление tasks здесь больше не нужно, так как isTimerRunning удалено из Task,
+        // а состояние для UI вычисляется на лету из getCurrentUserTimerData().
     }
     var currentTime by mutableStateOf("")
 
@@ -146,11 +142,8 @@ class MainViewModel : ViewModel() {
         // в userTimerDataMap. Новый пользователь подхватит свое состояние.
         currentUserIndex = index
         loadTasks() // Загружаем задачи для нового пользователя
-        // Обновляем tasks, чтобы отразить isTimerRunning для UI нового пользователя
-        val currentData = getCurrentUserTimerData()
-        tasks = tasks.map { task ->
-            task.copy(/*isTimerRunning = task.id == currentData.activeTimerId && !currentData.isPausedForUserAction && !currentData.isSystemPaused*/)
-        }
+        // Обновление tasks здесь больше не нужно, так как isTimerRunning удалено из Task,
+        // а состояние для UI вычисляется на лету из getCurrentUserTimerData().
     }
 
     fun loadTasks() {
@@ -729,9 +722,17 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             while (true) {
                 delay(1000)
-                val currentUserData = getCurrentUserTimerData()
-                if (currentUserData.activeTimerId != null && !currentUserData.isPausedForUserAction && !currentUserData.isSystemPaused) {
-                    updateCurrentUserTimerData(currentUserData.copy(timerSeconds = currentUserData.timerSeconds + 1))
+                val newMap = userTimerDataMap.toMutableMap()
+                var mapChanged = false
+                userTimerDataMap.forEach { (userId, data) ->
+                    if (data.activeTimerId != null && !data.isPausedForUserAction && !data.isSystemPaused) {
+                        val newData = data.copy(timerSeconds = data.timerSeconds + 1)
+                        newMap[userId] = newData
+                        mapChanged = true
+                    }
+                }
+                if (mapChanged) {
+                    userTimerDataMap = newMap.toMap() // Обновляем состояние, чтобы Compose среагировал
                 }
             }
         }
