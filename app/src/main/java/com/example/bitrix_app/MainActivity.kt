@@ -1012,7 +1012,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
+            .padding(20.dp) // Увеличиваем основной отступ
     ) {
         // Верхняя панель: пользователь, время, статус работы, настройки
         Row(
@@ -1024,9 +1024,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             Box {
                 IconButton(
                     onClick = { isUserMenuExpanded = true },
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(60.dp) // Увеличиваем размер кнопки аватара
                 ) {
-                    UserAvatar(user = viewModel.getCurrentUser(), size = 48)
+                    UserAvatar(user = viewModel.getCurrentUser(), size = 60) // Увеличиваем аватар
                 }
 
                 DropdownMenu(
@@ -1059,7 +1059,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             // Текущее время в центре
             Text(
                 text = viewModel.currentTime,
-                fontSize = 28.sp,
+                fontSize = 32.sp, // Увеличиваем шрифт времени
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -1073,7 +1073,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     IconButton(
                         onClick = { isSettingsExpanded = true }
                     ) {
-                        Text("⚙️", fontSize = 20.sp)
+                        Text("⚙️", fontSize = 28.sp) // Увеличиваем иконку настроек
                     }
 
                     DropdownMenu(
@@ -1106,7 +1106,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(20.dp)) // Увеличиваем отступ
 
         val currentUserTimerData = viewModel.getCurrentUserTimerData()
 
@@ -1117,22 +1117,22 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (currentUserTimerData.isPausedForUserAction) Color(0xFFFFF9C4) /* Светло-желтый для пользовательской паузы */
-                                         else Color(0xFFE3F2FD) /* Голубой для активного */
+                        containerColor = if (currentUserTimerData.isPausedForUserAction) StatusYellow
+                                         else StatusBlue
                     )
                 ) {
                     Column(
-                        modifier = Modifier.padding(16.dp)
+                        modifier = Modifier.padding(20.dp) // Увеличиваем отступ
                     ) {
                         Text(
                             text = if (currentUserTimerData.isPausedForUserAction) "⏸️ Таймер приостановлен (пользователем)" else "🕐 Активный таймер",
-                            fontSize = 16.sp,
+                            fontSize = 18.sp, // Увеличиваем шрифт
                             fontWeight = FontWeight.Bold,
-                            color = if (currentUserTimerData.isPausedForUserAction) Color(0xFFF57F17) else MaterialTheme.colorScheme.primary
+                            color = if (currentUserTimerData.isPausedForUserAction) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
                         )
                         Text(
                             text = it.title,
-                            fontSize = 14.sp,
+                            fontSize = 16.sp, // Увеличиваем шрифт
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -1141,13 +1141,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                                 if (currentUserTimerData.isPausedForUserAction) currentUserTimerData.pausedTimerSecondsForUserAction
                                 else currentUserTimerData.timerSeconds
                             ),
-                            fontSize = 18.sp,
+                            fontSize = 20.sp, // Увеличиваем шрифт
                             fontWeight = FontWeight.Bold,
-                            color = if (currentUserTimerData.isPausedForUserAction) Color(0xFFF57F17) else MaterialTheme.colorScheme.primary
+                            color = if (currentUserTimerData.isPausedForUserAction) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(20.dp)) // Увеличиваем отступ
             }
         }
 
@@ -1157,10 +1157,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             task?.let {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)) // Оранжевый для системной паузы
+                    colors = CardDefaults.cardColors(containerColor = StatusOrange)
                 ) {
                     Column(
-                        modifier = Modifier.padding(16.dp)
+                        modifier = Modifier.padding(20.dp) // Увеличиваем отступ
                     ) {
                         Text(
                             text = "⏸️ Таймер на системной паузе (${
@@ -1170,25 +1170,25 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                                     else -> "Системная пауза"
                                 }
                             })",
-                            fontSize = 16.sp,
+                            fontSize = 18.sp, // Увеличиваем шрифт
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFFFF8F00)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
                             text = it.title,
-                            fontSize = 14.sp,
+                            fontSize = 16.sp, // Увеличиваем шрифт
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = viewModel.formatTime(currentUserTimerData.timerSeconds), // Показываем текущие секунды активного таймера
-                            fontSize = 18.sp,
+                            fontSize = 20.sp, // Увеличиваем шрифт
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFFFF8F00)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(20.dp)) // Увеличиваем отступ
             }
         }
 
@@ -1207,15 +1207,15 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         viewModel.errorMessage?.let { error ->
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE))
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
             ) {
                 Text(
                     text = error,
-                    modifier = Modifier.padding(16.dp),
-                    color = Color(0xFFD32F2F)
+                    modifier = Modifier.padding(20.dp), // Увеличиваем отступ
+                    color = MaterialTheme.colorScheme.onErrorContainer
                 )
             }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp)) // Увеличиваем отступ
         }
 
         // Список задач
@@ -1236,7 +1236,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     isTimerSystemPausedForThisTask = isTaskSystemPaused,
                     viewModel = viewModel // Передаем ViewModel в TaskCard
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(12.dp)) // Увеличиваем отступ между карточками
             }
         }
     }
@@ -1248,14 +1248,14 @@ fun UserAvatar(user: User, size: Int) {
         modifier = Modifier
             .size(size.dp)
             .clip(CircleShape)
-            .background(Color(0xFF8D6E63)), // Коричневый цвет
+            .background(AvatarBackground), // Используем цвет из Color.kt
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = user.avatar, // Инициалы
-            fontSize = (size * 0.4).sp,
+            fontSize = (size * 0.45).sp, // Немного увеличиваем относительный размер шрифта
             fontWeight = FontWeight.Bold,
-            color = Color.White,
+            color = LightOnPrimary, // Используем цвет текста из темы
             textAlign = TextAlign.Center
         )
     }
@@ -1263,20 +1263,21 @@ fun UserAvatar(user: User, size: Int) {
 
 @Composable
 fun WorkStatusIcon(workStatus: WorkStatus) {
-    val (icon, color) = when (workStatus) {
-        WorkStatus.BEFORE_WORK -> "🌅" to Color.Gray
-        WorkStatus.WORKING -> "💼" to Color(0xFF4CAF50)
-        WorkStatus.BREAK -> "☕" to Color(0xFFFF9800)
-        WorkStatus.LUNCH -> "🍽️" to Color(0xFFFF5722)
-        WorkStatus.AFTER_WORK -> "🌆" to Color.Gray
+    val (icon, color, contentColor) = when (workStatus) {
+        WorkStatus.BEFORE_WORK -> "🌅" to Color.Gray to MaterialTheme.colorScheme.onSurface
+        WorkStatus.WORKING -> "💼" to MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
+        WorkStatus.BREAK -> "☕" to StatusOrange to MaterialTheme.colorScheme.onSurfaceVariant // Используем StatusOrange для фона
+        WorkStatus.LUNCH -> "🍽️" to StatusRed to MaterialTheme.colorScheme.onSurfaceVariant // Используем StatusRed для фона (или другой подходящий)
+        WorkStatus.AFTER_WORK -> "🌆" to Color.Gray to MaterialTheme.colorScheme.onSurface
     }
 
     Text(
         text = icon,
-        fontSize = 24.sp,
+        fontSize = 30.sp, // Увеличиваем иконку
+        color = contentColor,
         modifier = Modifier
-            .background(color.copy(alpha = 0.1f), CircleShape)
-            .padding(8.dp)
+            .background(color.copy(alpha = 0.2f), CircleShape) // Немного увеличиваем alpha для видимости фона
+            .padding(10.dp) // Увеличиваем отступ
     )
 }
 
@@ -1311,17 +1312,17 @@ fun TaskCard(
             .clickable { isExpanded = !isExpanded },
         colors = CardDefaults.cardColors(
             containerColor = when {
-                task.isCompleted -> Color(0xFFE8F5E8) // Зеленый для завершенных
-                isTimerRunningForThisTask -> Color(0xFFE3F2FD) // Голубой для активного таймера
-                isTimerUserPausedForThisTask -> Color(0xFFFFF9C4) // Светло-желтый для пользовательской паузы
-                isTimerSystemPausedForThisTask -> Color(0xFFFFF3E0) // Оранжевый для системной паузы
-                task.isOverdue -> Color(0xFFFFEBEE) // Розовый для просроченных
-                else -> MaterialTheme.colorScheme.surface // Стандартный
+                task.isCompleted -> StatusGreen
+                isTimerRunningForThisTask -> StatusBlue
+                isTimerUserPausedForThisTask -> StatusYellow
+                isTimerSystemPausedForThisTask -> StatusOrange
+                task.isOverdue -> StatusRed
+                else -> MaterialTheme.colorScheme.surfaceVariant // Используем surfaceVariant для стандартного состояния
             }
         )
     ) {
         Column(
-            modifier = Modifier.padding(16.dp)
+            modifier = Modifier.padding(20.dp) // Увеличиваем отступ
         ) {
             // Заголовок и статус
             Row(
@@ -1335,7 +1336,7 @@ fun TaskCard(
                 ) {
                     Text(
                         text = task.title,
-                        fontSize = 16.sp,
+                        fontSize = 18.sp, // Увеличиваем шрифт
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),
                         maxLines = if (isExpanded) Int.MAX_VALUE else 2,
@@ -1349,37 +1350,37 @@ fun TaskCard(
                         ),
                         contentDescription = if (isExpanded) "Свернуть" else "Развернуть",
                         modifier = Modifier
-                            .size(20.dp)
+                            .size(28.dp) // Увеличиваем иконку
                             .padding(start = 8.dp),
-                        tint = Color.Gray
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
                 Text(
                     text = task.statusText,
-                    fontSize = 12.sp,
-                    color = when {
-                        task.isCompleted -> Color(0xFF4CAF50)
-                        task.isInProgress -> Color(0xFF2196F3)
-                        task.isPending -> Color(0xFFFF9800)
-                        else -> Color.Gray
+                    fontSize = 14.sp, // Увеличиваем шрифт
+                    color = when { // Используем цвета из темы или определенные статусные
+                        task.isCompleted -> MaterialTheme.colorScheme.tertiary
+                        task.isInProgress -> MaterialTheme.colorScheme.primary
+                        task.isPending -> StatusOrange // или другой подходящий
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
                     modifier = Modifier
                         .background(
                             when {
-                                task.isCompleted -> Color(0xFF4CAF50).copy(alpha = 0.1f)
-                                task.isInProgress -> Color(0xFF2196F3).copy(alpha = 0.1f)
-                                task.isPending -> Color(0xFFFF9800).copy(alpha = 0.1f)
-                                else -> Color.Gray.copy(alpha = 0.1f)
+                                task.isCompleted -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+                                task.isInProgress -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                                task.isPending -> StatusOrange.copy(alpha = 0.3f)
+                                else -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
                             },
                             CircleShape
                         )
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .padding(horizontal = 10.dp, vertical = 5.dp) // Увеличиваем отступы
                 )
             }
 
             // Краткая информация (всегда видна)
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp)) // Увеличиваем отступ
 
             // Прогресс-бар времени
             val progress = if (task.timeEstimate > 0) {
@@ -1388,15 +1389,16 @@ fun TaskCard(
 
             LinearProgressIndicator(
                 progress = progress,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().height(8.dp), // Увеличиваем толщину
                 color = when {
-                    task.isOverdue -> Color(0xFFE57373)
-                    progress > 0.8f -> Color(0xFFFFB74D)
-                    else -> Color(0xFF81C784)
-                }
+                    task.isOverdue -> ProgressBarRed
+                    progress > 0.8f -> ProgressBarOrange
+                    else -> ProgressBarGreen
+                },
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp)) // Увеличиваем отступ
 
             // Краткая информация о времени
             Row(
@@ -1405,60 +1407,60 @@ fun TaskCard(
             ) {
                 Text(
                     text = "Время: ${task.formattedTime}",
-                    fontSize = 12.sp,
-                    color = Color.Gray
+                    fontSize = 14.sp, // Увеличиваем шрифт
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
                     text = "${task.progressPercent}%",
-                    fontSize = 12.sp,
-                    color = if (task.isOverdue) Color(0xFFE57373) else Color.Gray
+                    fontSize = 14.sp, // Увеличиваем шрифт
+                    color = if (task.isOverdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
             // Развернутая информация
             if (isExpanded) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ
 
                 // Разделитель
                 Divider(
                     modifier = Modifier.fillMaxWidth(),
                     thickness = 1.dp,
-                    color = Color.Gray.copy(alpha = 0.3f)
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ
 
                 // Описание (если есть)
                 if (task.description.isNotEmpty()) {
                     Text(
                         text = "Описание:",
-                        fontSize = 14.sp,
+                        fontSize = 16.sp, // Увеличиваем шрифт
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp)) // Увеличиваем отступ
                     Text(
                         text = task.description,
-                        fontSize = 14.sp,
-                        color = Color.Gray
+                        fontSize = 16.sp, // Увеличиваем шрифт
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ
                 }
 
                 // Подробная информация о времени
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F5F5))
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                 ) {
                     Column(
-                        modifier = Modifier.padding(12.dp)
+                        modifier = Modifier.padding(16.dp) // Увеличиваем отступ
                     ) {
                         Text(
                             text = "⏱️ Временные показатели",
-                            fontSize = 14.sp,
+                            fontSize = 16.sp, // Увеличиваем шрифт
                             fontWeight = FontWeight.Bold
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(12.dp)) // Увеличиваем отступ
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1467,52 +1469,52 @@ fun TaskCard(
                             Column {
                                 Text(
                                     text = "Потрачено:",
-                                    fontSize = 12.sp,
-                                    color = Color.Gray
+                                    fontSize = 14.sp, // Увеличиваем шрифт
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
                                     text = "${task.timeSpent / 3600}:${String.format("%02d", (task.timeSpent % 3600) / 60)}",
-                                    fontSize = 14.sp,
+                                    fontSize = 16.sp, // Увеличиваем шрифт
                                     fontWeight = FontWeight.Bold,
-                                    color = if (task.isOverdue) Color(0xFFE57373) else Color(0xFF4CAF50)
+                                    color = if (task.isOverdue) MaterialTheme.colorScheme.error else ProgressBarGreen
                                 )
                             }
 
                             Column {
                                 Text(
                                     text = "Планируется:",
-                                    fontSize = 12.sp,
-                                    color = Color.Gray
+                                    fontSize = 14.sp, // Увеличиваем шрифт
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
                                     text = "${task.timeEstimate / 3600}:${String.format("%02d", (task.timeEstimate % 3600) / 60)}",
-                                    fontSize = 14.sp,
+                                    fontSize = 16.sp, // Увеличиваем шрифт
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF2196F3)
+                                    color = MaterialTheme.colorScheme.primary // Или другой подходящий
                                 )
                             }
 
                             Column {
                                 Text(
                                     text = "Процент:",
-                                    fontSize = 12.sp,
-                                    color = Color.Gray
+                                    fontSize = 14.sp, // Увеличиваем шрифт
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
                                     text = "${task.progressPercent}%",
-                                    fontSize = 14.sp,
+                                    fontSize = 16.sp, // Увеличиваем шрифт
                                     fontWeight = FontWeight.Bold,
                                     color = when {
-                                        task.progressPercent >= 100 -> Color(0xFFE57373)
-                                        task.progressPercent >= 80 -> Color(0xFFFF9800)
-                                        else -> Color(0xFF4CAF50)
+                                        task.progressPercent >= 100 -> ProgressBarRed
+                                        task.progressPercent >= 80 -> ProgressBarOrange
+                                        else -> ProgressBarGreen
                                     }
                                 )
                             }
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ
 
                 // Чек-листы
                 val checklist = viewModel.checklistsMap[task.id]
@@ -1522,37 +1524,41 @@ fun TaskCard(
                 } else if (!checklist.isNullOrEmpty()) {
                     Text(
                         text = "Чек-лист:",
-                        fontSize = 14.sp,
+                        fontSize = 16.sp, // Увеличиваем шрифт
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp)) // Увеличиваем отступ
                     checklist.forEach { item ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.clickable {
-                                viewModel.toggleChecklistItemStatus(task.id, item.id, item.isComplete)
-                            }
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewModel.toggleChecklistItemStatus(task.id, item.id, item.isComplete)
+                                }
+                                .padding(vertical = 4.dp) // Добавляем вертикальный отступ для лучшего касания
                         ) {
                             Checkbox(
                                 checked = item.isComplete,
-                                onCheckedChange = { // newCheckedState -> // Эта лямбда теперь не нужна, т.к. есть clickable на Row
+                                onCheckedChange = {
                                     viewModel.toggleChecklistItemStatus(task.id, item.id, item.isComplete)
                                 },
-                                enabled = true, // Делаем чекбокс активным
+                                enabled = true,
                                 colors = CheckboxDefaults.colors(
                                     checkedColor = MaterialTheme.colorScheme.primary,
-                                    uncheckedColor = Color.Gray
+                                    uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             )
+                            Spacer(modifier = Modifier.width(8.dp)) // Отступ между чекбоксом и текстом
                             Text(
                                 text = item.title,
-                                fontSize = 14.sp,
-                                color = if (item.isComplete) Color.Gray else MaterialTheme.colorScheme.onSurface
+                                fontSize = 16.sp, // Увеличиваем шрифт
+                                color = if (item.isComplete) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
                             )
                         }
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ
                 }
 
                 // Подзадачи
@@ -1563,27 +1569,27 @@ fun TaskCard(
                 } else if (!subtasks.isNullOrEmpty()) {
                     Text(
                         text = "Подзадачи:",
-                        fontSize = 14.sp,
+                        fontSize = 16.sp, // Увеличиваем шрифт
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp)) // Увеличиваем отступ
                     subtasks.forEach { subtask ->
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp), // Небольшой отступ между подзадачами
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                                .padding(vertical = 6.dp), // Увеличиваем отступ
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                         ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
+                            Column(modifier = Modifier.padding(16.dp)) { // Увеличиваем отступ
                                 Text(
                                     text = subtask.title,
-                                    fontSize = 14.sp,
+                                    fontSize = 16.sp, // Увеличиваем шрифт
                                     fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(6.dp)) // Увеличиваем отступ
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1591,57 +1597,64 @@ fun TaskCard(
                                 ) {
                                     Text(
                                         text = "Статус: ${subtask.statusText}",
-                                        fontSize = 12.sp,
-                                        color = when {
-                                            subtask.isCompleted -> Color(0xFF4CAF50)
-                                            subtask.isInProgress -> Color(0xFF2196F3)
-                                            subtask.isPending -> Color(0xFFFF9800)
-                                            else -> Color.Gray
+                                        fontSize = 14.sp, // Увеличиваем шрифт
+                                        color = when { // Используем цвета из темы или определенные статусные
+                                            subtask.isCompleted -> MaterialTheme.colorScheme.tertiary
+                                            subtask.isInProgress -> MaterialTheme.colorScheme.primary
+                                            subtask.isPending -> StatusOrange // или другой подходящий
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
                                         }
                                     )
                                     Text(
                                         text = "Время: ${subtask.formattedTime}",
-                                        fontSize = 12.sp,
-                                        color = Color.Gray
+                                        fontSize = 14.sp, // Увеличиваем шрифт
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ
 
             // Кнопки действий
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp) // Увеличиваем расстояние между кнопками
             ) {
                 // Кнопка таймера
                 Button(
                     onClick = { onTimerToggle(task) },
-                    modifier = Modifier.weight(1f),
-                    enabled = !isTimerSystemPausedForThisTask, // Блокируем кнопку если таймер на системной паузе
+                    modifier = Modifier.weight(1f).heightIn(min = 52.dp), // Увеличиваем высоту кнопки
+                    enabled = !isTimerSystemPausedForThisTask,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = when {
-                            isTimerRunningForThisTask -> Color(0xFFE57373) // Красный для стоп
-                            isTimerUserPausedForThisTask -> Color(0xFF66BB6A) // Зеленый для продолжить пользовательскую паузу
-                            isTimerSystemPausedForThisTask -> Color.Gray // Серый, если системная пауза (кнопка disabled)
-                            else -> MaterialTheme.colorScheme.primary // Синий для старт
+                            isTimerRunningForThisTask -> MaterialTheme.colorScheme.error // Используем цвет ошибки для "Стоп"
+                            isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.tertiary // Зеленый для "Продолжить"
+                            isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f) // Цвет для disabled
+                            else -> MaterialTheme.colorScheme.primary // Основной цвет для "Старт"
                         },
-                        disabledContainerColor = Color.LightGray // Цвет для заблокированной кнопки
+                        contentColor = when {
+                            isTimerRunningForThisTask -> MaterialTheme.colorScheme.onError
+                            isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.onTertiary
+                            isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = ContentAlpha.disabled)
+                            else -> MaterialTheme.colorScheme.onPrimary
+                        },
+                        disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                        disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = ContentAlpha.disabled)
                     )
                 ) {
                     Text(
                         text = when {
                             isTimerRunningForThisTask -> "⏹️ Стоп"
                             isTimerUserPausedForThisTask -> "▶️ Продолжить"
-                            isTimerSystemPausedForThisTask -> "⏸️ Пауза" // Показываем, что на паузе
+                            isTimerSystemPausedForThisTask -> "⏸️ Пауза"
                             else -> "▶️ Старт"
                         },
-                        fontSize = 14.sp
+                        fontSize = 16.sp // Увеличиваем шрифт
                     )
                 }
 
@@ -1649,14 +1662,15 @@ fun TaskCard(
                 if (!task.isCompleted) {
                     Button(
                         onClick = { onCompleteTask(task) },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).heightIn(min = 52.dp), // Увеличиваем высоту кнопки
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF4CAF50)
+                            containerColor = ProgressBarGreen, // Используем наш зеленый для завершения
+                            contentColor = MaterialTheme.colorScheme.onPrimary // или другой контрастный
                         )
                     ) {
                         Text(
                             text = "✅ Завершить",
-                            fontSize = 14.sp
+                            fontSize = 16.sp // Увеличиваем шрифт
                         )
                     }
                 }
