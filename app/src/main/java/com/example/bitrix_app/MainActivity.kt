@@ -1640,11 +1640,11 @@ fun TaskCard(
                         contentColor = when {
                             isTimerRunningForThisTask -> MaterialTheme.colorScheme.onError
                             isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.onTertiary
-                            isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = androidx.compose.material3.ContentAlpha.disabled)
+                            isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) // Заменяем на фактическое значение
                             else -> MaterialTheme.colorScheme.onPrimary
                         },
                         disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
-                        disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = androidx.compose.material3.ContentAlpha.disabled)
+                        disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) // Заменяем на фактическое значение
                     )
                 ) {
                     Text(
