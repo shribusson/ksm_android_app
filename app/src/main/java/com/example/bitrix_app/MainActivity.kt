@@ -541,6 +541,7 @@ class MainViewModel : ViewModel() {
 
     fun toggleChecklistItemStatus(taskId: String, checklistItemId: String, currentIsComplete: Boolean) {
         val user = users[currentUserIndex]
+        // Исправляем имя метода: task. -> tasks.
         val action = if (currentIsComplete) "tasks.checklistitem.renew" else "tasks.checklistitem.complete"
         val url = "${user.webhookUrl}$action"
 
@@ -1562,17 +1563,43 @@ fun TaskCard(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     subtasks.forEach { subtask ->
-                        // Можно сделать более сложную карточку для подзадачи, но пока просто текст
                         Card(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color.LightGray.copy(alpha = 0.2f))
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp), // Небольшой отступ между подзадачами
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                         ) {
-                            Text(
-                                text = subtask.title,
-                                fontSize = 14.sp,
-                                modifier = Modifier.padding(8.dp),
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = subtask.title,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Статус: ${subtask.statusText}",
+                                        fontSize = 12.sp,
+                                        color = when {
+                                            subtask.isCompleted -> Color(0xFF4CAF50)
+                                            subtask.isInProgress -> Color(0xFF2196F3)
+                                            subtask.isPending -> Color(0xFFFF9800)
+                                            else -> Color.Gray
+                                        }
+                                    )
+                                    Text(
+                                        text = "Время: ${subtask.formattedTime}",
+                                        fontSize = 12.sp,
+                                        color = Color.Gray
+                                    )
+                                }
+                            }
                         }
                     }
                     Spacer(modifier = Modifier.height(12.dp))
