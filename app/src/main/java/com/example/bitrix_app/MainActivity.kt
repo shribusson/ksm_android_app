@@ -49,8 +49,8 @@ data class Task(
     val description: String,
     val timeSpent: Int,
     val timeEstimate: Int,
-    val status: String = "",
-    var isTimerRunning: Boolean = false
+    val status: String = ""
+    // Поле isTimerRunning удалено, так как состояние таймера управляется в UserTimerData
 ) {
     val progressPercent: Int get() = if (timeEstimate > 0) (timeSpent * 100 / timeEstimate) else 0
     val isOverdue: Boolean get() = progressPercent > 100
