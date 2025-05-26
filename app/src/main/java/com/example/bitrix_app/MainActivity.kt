@@ -57,6 +57,8 @@ data class Task(
     val isCompleted: Boolean get() = status == "5" // 5 = Завершена
     val isInProgress: Boolean get() = status == "2" // 2 = В работе
     val isPending: Boolean get() = status == "3" // 3 = Ждет выполнения
+    // Уберем isTimerRunning из Task, так как это состояние теперь будет управляться в UserTimerData
+    // var isTimerRunning: Boolean = false 
 
     val statusText: String get() = when (status) {
         "1" -> "Новая"
@@ -80,6 +82,16 @@ data class Task(
 
 enum class WorkStatus { BEFORE_WORK, WORKING, BREAK, LUNCH, AFTER_WORK }
 
+// Данные состояния таймера для одного пользователя
+data class UserTimerData(
+    val activeTimerId: String? = null,
+    val timerSeconds: Int = 0,
+    val isPausedForUserAction: Boolean = false, // Пауза, инициированная пользователем или сменой задачи
+    val pausedTaskIdForUserAction: String? = null, // ID задачи, если таймер был приостановлен для нее пользователем
+    val pausedTimerSecondsForUserAction: Int = 0, // Секунды, если таймер был приостановлен для задачи пользователем
+    val isSystemPaused: Boolean = false // Пауза из-за системных событий (перерыв, обед)
+)
+
 // ViewModel
 class MainViewModel : ViewModel() {
     private val client = OkHttpClient()
@@ -98,12 +110,26 @@ class MainViewModel : ViewModel() {
     var errorMessage by mutableStateOf<String?>(null)
     var sendComments by mutableStateOf(true) // Настройка отправки комментариев
 
-    // Состояние таймера
-    var activeTimer by mutableStateOf<String?>(null)
-    var timerSeconds by mutableStateOf(0)
-    var pausedTimerTaskId by mutableStateOf<String?>(null) // ID задачи с приостановленным таймером
-    var pausedTimerSeconds by mutableStateOf(0) // Время приостановленного таймера
-    var isTimerPaused by mutableStateOf(false) // Флаг паузы таймера
+    // Состояние таймеров для всех пользователей
+    private var userTimerDataMap by mutableStateOf<Map<String, UserTimerData>>(emptyMap())
+
+    // Вспомогательная функция для получения данных таймера текущего пользователя
+    fun getCurrentUserTimerData(): UserTimerData {
+        val userId = users[currentUserIndex].userId
+        return userTimerDataMap[userId] ?: UserTimerData()
+    }
+
+    // Вспомогательная функция для обновления данных таймера текущего пользователя
+    private fun updateCurrentUserTimerData(data: UserTimerData) {
+        val userId = users[currentUserIndex].userId
+        userTimerDataMap = userTimerDataMap + (userId to data)
+        // Обновляем tasks, чтобы отразить isTimerRunning для UI
+        val currentData = getCurrentUserTimerData()
+        tasks = tasks.map { task ->
+            task.copy(/*isTimerRunning = task.id == currentData.activeTimerId && !currentData.isPausedForUserAction && !currentData.isSystemPaused*/)
+            // isTimerRunning убрали из Task, теперь это вычисляется в UI
+        }
+    }
     var currentTime by mutableStateOf("")
 
     init {
@@ -112,32 +138,26 @@ class MainViewModel : ViewModel() {
         startPeriodicUpdates()
         startPeriodicTaskUpdates()
         startTimeUpdates()
+        startUniversalTimerLoop() // Запускаем универсальный цикл таймера
     }
 
     fun switchUser(index: Int) {
-        // Останавливаем активный таймер при смене пользователя и сохраняем время
-        activeTimer?.let { taskId ->
-            val currentTask = tasks.find { it.id == taskId }
-            currentTask?.let { stopTimerAndSaveTime(it) }
-        }
-        activeTimer = null
-        timerSeconds = 0
-        pausedTimerTaskId = null
-        pausedTimerSeconds = 0
-        isTimerPaused = false
-
+        // При смене пользователя, предыдущий таймер (если был) продолжает свое состояние
+        // в userTimerDataMap. Новый пользователь подхватит свое состояние.
         currentUserIndex = index
-        loadTasks()
+        loadTasks() // Загружаем задачи для нового пользователя
+        // Обновляем tasks, чтобы отразить isTimerRunning для UI нового пользователя
+        val currentData = getCurrentUserTimerData()
+        tasks = tasks.map { task ->
+            task.copy(/*isTimerRunning = task.id == currentData.activeTimerId && !currentData.isPausedForUserAction && !currentData.isSystemPaused*/)
+        }
     }
 
     fun loadTasks() {
         isLoading = true
         errorMessage = null
         val user = users[currentUserIndex]
-
-        // Сохраняем состояние активного таймера перед загрузкой
-        val currentActiveTimer = activeTimer
-        val currentTimerSeconds = timerSeconds
+        val currentUserDataBeforeLoad = getCurrentUserTimerData() // Сохраняем текущее состояние таймера пользователя
 
         // Получаем ВСЕ задачи пользователя без фильтрации по статусу
         val url = "${user.webhookUrl}tasks.task.list" +
@@ -205,26 +225,27 @@ class MainViewModel : ViewModel() {
                                     }
                                 }
 
-                                // Восстанавливаем состояние таймера после загрузки
-                                tasksList.forEach { task ->
-                                    if (task.id == currentActiveTimer) {
-                                        task.isTimerRunning = true
-                                    }
-                                }
-
                                 // Сортируем задачи: активный таймер в начале, затем по завершенности и ID
                                 tasks = tasksList.sortedWith(
-                                    compareBy<Task> { it.id != currentActiveTimer }
+                                    compareBy<Task> { it.id != currentUserDataBeforeLoad.activeTimerId }
                                         .thenBy { it.isCompleted }
                                         .thenBy { it.id.toIntOrNull() ?: 0 }
                                 )
                                 println("Loaded ${tasksList.size} tasks")
 
-                                // Восстанавливаем активный таймер
-                                if (currentActiveTimer != null && tasks.any { it.id == currentActiveTimer }) {
-                                    activeTimer = currentActiveTimer
-                                    timerSeconds = currentTimerSeconds
+                                // Проверяем, существует ли еще активная задача после загрузки
+                                val activeTaskExists = tasks.any { it.id == currentUserDataBeforeLoad.activeTimerId }
+                                if (currentUserDataBeforeLoad.activeTimerId != null && !activeTaskExists) {
+                                    // Активная задача больше не существует, сбрасываем таймер для этого пользователя
+                                    updateCurrentUserTimerData(UserTimerData())
+                                } else {
+                                    // Восстанавливаем isTimerRunning для UI на основе сохраненных данных
+                                    // (Это больше не нужно, так как isTimerRunning убрано из Task)
+                                    // tasks = tasks.map { task ->
+                                    //    task.copy(isTimerRunning = task.id == currentUserDataBeforeLoad.activeTimerId && !currentUserDataBeforeLoad.isPausedForUserAction && !currentUserDataBeforeLoad.isSystemPaused)
+                                    // }
                                 }
+
 
                                 if (tasksList.isEmpty()) {
                                     // Попробуем альтернативный запрос без фильтров
@@ -283,7 +304,7 @@ class MainViewModel : ViewModel() {
 
                                         if (tasksList.isNotEmpty()) {
                                             tasks = tasksList.sortedWith(
-                                                compareBy<Task> { it.id != activeTimer }
+                                                compareBy<Task> { it.id != getCurrentUserTimerData().activeTimerId }
                                                     .thenBy { it.isCompleted }
                                                     .thenBy { it.id.toIntOrNull() ?: 0 }
                                             )
@@ -351,7 +372,7 @@ class MainViewModel : ViewModel() {
 
                                         if (tasksList.isNotEmpty()) {
                                             tasks = tasksList.sortedWith(
-                                                compareBy<Task> { it.id != activeTimer }
+                                                compareBy<Task> { it.id != getCurrentUserTimerData().activeTimerId }
                                                     .thenBy { it.isCompleted }
                                                     .thenBy { it.id.toIntOrNull() ?: 0 }
                                             )
@@ -406,48 +427,50 @@ class MainViewModel : ViewModel() {
     }
 
     fun toggleTimer(task: Task) {
-        if (activeTimer == task.id) {
-            // Остановить таймер и записать время в Битрикс
-            stopTimerAndSaveTime(task)
+        val currentUserData = getCurrentUserTimerData()
+
+        if (currentUserData.activeTimerId == task.id && !currentUserData.isSystemPaused) {
+            // Таймер активен для этой задачи и не на системной паузе -> останавливаем
+            stopTimerAndSaveTime(task, currentUserData.timerSeconds)
             if (sendComments) {
-                sendTimerComment(task, "Таймер остановлен")
+                sendTimerComment(task, "Таймер остановлен", currentUserData.timerSeconds)
             }
-            activeTimer = null
-            tasks = tasks.map { if (it.id == task.id) it.copy(isTimerRunning = false) else it }
+            updateCurrentUserTimerData(UserTimerData()) // Сбрасываем таймер для пользователя
         } else {
-            // Сначала останавливаем предыдущий таймер, если есть
-            activeTimer?.let { currentTaskId ->
-                val currentTask = tasks.find { it.id == currentTaskId }
-                currentTask?.let {
-                    stopTimerAndSaveTime(it)
+            // Останавливаем любой другой активный таймер (если он был)
+            if (currentUserData.activeTimerId != null && currentUserData.activeTimerId != task.id) {
+                val previousTask = tasks.find { it.id == currentUserData.activeTimerId }
+                previousTask?.let {
+                    stopTimerAndSaveTime(it, currentUserData.timerSeconds)
                     if (sendComments) {
-                        sendTimerComment(it, "Таймер остановлен")
+                        sendTimerComment(it, "Таймер остановлен (переключение)", currentUserData.timerSeconds)
                     }
                 }
             }
 
-            // Проверяем, есть ли приостановленный таймер для этой задачи
-            if (pausedTimerTaskId == task.id) {
-                // Возобновляем приостановленный таймер
-                timerSeconds = pausedTimerSeconds
-                pausedTimerTaskId = null
-                pausedTimerSeconds = 0
-                isTimerPaused = false
-                if (sendComments) {
-                    sendTimerComment(task, "Таймер возобновлен")
-                }
-            } else {
-                // Запускаем новый таймер
-                timerSeconds = 0
-                if (sendComments) {
-                    sendTimerComment(task, "Таймер запущен")
-                }
+            var newTimerSeconds = 0
+            var commentAction = "Таймер запущен"
+
+            if (currentUserData.pausedTaskIdForUserAction == task.id) {
+                // Возобновляем таймер, который был приостановлен пользователем для этой задачи
+                newTimerSeconds = currentUserData.pausedTimerSecondsForUserAction
+                commentAction = "Таймер возобновлен"
             }
 
-            // Запустить новый таймер
-            tasks = tasks.map { it.copy(isTimerRunning = false) }
-            activeTimer = task.id
-            tasks = tasks.map { if (it.id == task.id) it.copy(isTimerRunning = true) else it }
+            updateCurrentUserTimerData(
+                UserTimerData(
+                    activeTimerId = task.id,
+                    timerSeconds = newTimerSeconds,
+                    isPausedForUserAction = false,
+                    pausedTaskIdForUserAction = null,
+                    pausedTimerSecondsForUserAction = 0,
+                    isSystemPaused = currentUserData.isSystemPaused // Сохраняем состояние системной паузы
+                )
+            )
+
+            if (sendComments) {
+                sendTimerComment(task, commentAction, newTimerSeconds)
+            }
 
             // Перемещаем задачу с активным таймером в начало списка
             tasks = tasks.sortedWith(
@@ -455,17 +478,16 @@ class MainViewModel : ViewModel() {
                     .thenBy { it.isCompleted }
                     .thenBy { it.id.toIntOrNull() ?: 0 }
             )
-
-            startTimer()
+            // startUniversalTimerLoop уже работает, он подхватит изменения
         }
     }
 
     // Отправка комментария о состоянии таймера
-    private fun sendTimerComment(task: Task, action: String) {
+    private fun sendTimerComment(task: Task, action: String, currentSeconds: Int) {
         val user = users[currentUserIndex]
         val url = "${user.webhookUrl}task.commentitem.add"
 
-        val commentText = "$action - ${user.name} (${formatTime(timerSeconds)})"
+        val commentText = "$action - ${user.name} (${formatTime(currentSeconds)})"
 
         val formBody = FormBody.Builder()
             .add("taskId", task.id)
@@ -493,10 +515,10 @@ class MainViewModel : ViewModel() {
     }
 
     // Сохранение времени в Битрикс при остановке таймера
-    private fun stopTimerAndSaveTime(task: Task) {
+    private fun stopTimerAndSaveTime(task: Task, secondsToSave: Int) {
         // Сохраняем время только если прошло больше 10 секунд
-        if (timerSeconds < 10) {
-            println("Timer too short (${timerSeconds}s), not saving to Bitrix")
+        if (secondsToSave < 10) {
+            println("Timer too short (${secondsToSave}s), not saving to Bitrix for task ${task.id}")
             return
         }
 
@@ -506,8 +528,8 @@ class MainViewModel : ViewModel() {
         // Используем правильную структуру для task.elapseditem.add
         val formBody = FormBody.Builder()
             .add("taskId", task.id)
-            .add("arFields[SECONDS]", timerSeconds.toString())
-            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(timerSeconds)})")
+            .add("arFields[SECONDS]", secondsToSave.toString())
+            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(secondsToSave)})")
             .add("arFields[USER_ID]", user.userId)
             .build()
 
@@ -536,7 +558,7 @@ class MainViewModel : ViewModel() {
 
                                 // Пробуем упрощенный вариант
                                 println("Trying simplified parameters...")
-                                saveTimeSimplified(task)
+                                saveTimeSimplified(task, secondsToSave)
                             } else if (json.has("result")) {
                                 // Успешно сохранено - обновляем задачи без уведомления
                                 delay(1000)
@@ -552,14 +574,14 @@ class MainViewModel : ViewModel() {
     }
 
     // Упрощенный способ сохранения времени без USER_ID
-    private fun saveTimeSimplified(task: Task) {
+    private fun saveTimeSimplified(task: Task, secondsToSave: Int) {
         val user = users[currentUserIndex]
         val url = "${user.webhookUrl}task.elapseditem.add"
 
         val formBody = FormBody.Builder()
             .add("taskId", task.id)
-            .add("arFields[SECONDS]", timerSeconds.toString())
-            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(timerSeconds)})")
+            .add("arFields[SECONDS]", secondsToSave.toString())
+            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(secondsToSave)})")
             .build()
 
         val request = Request.Builder()
@@ -596,46 +618,40 @@ class MainViewModel : ViewModel() {
         })
     }
 
-    // Приостановка таймера на перерыв
-    private fun pauseTimer() {
-        activeTimer?.let { taskId ->
-            val task = tasks.find { it.id == taskId }
-            pausedTimerTaskId = taskId
-            pausedTimerSeconds = timerSeconds
-            isTimerPaused = true
-            activeTimer = null
-            timerSeconds = 0
-            tasks = tasks.map { it.copy(isTimerRunning = false) }
-
+    // Приостановка таймера из-за системных событий (перерыв, обед)
+    private fun systemPauseTimer() {
+        val currentUserData = getCurrentUserTimerData()
+        if (currentUserData.activeTimerId != null && !currentUserData.isSystemPaused) {
+            val task = tasks.find { it.id == currentUserData.activeTimerId }
+            updateCurrentUserTimerData(
+                currentUserData.copy(
+                    isSystemPaused = true
+                )
+            )
             if (sendComments && task != null) {
-                sendTimerComment(task, "Таймер приостановлен")
+                sendTimerComment(task, "Таймер системно приостановлен (перерыв/обед)", currentUserData.timerSeconds)
             }
-
-            println("Timer paused for task $taskId with ${pausedTimerSeconds}s")
+            println("Timer system-paused for task ${currentUserData.activeTimerId} with ${currentUserData.timerSeconds}s")
         }
     }
 
-    // Возобновление таймера после перерыва
-    private fun resumeTimer() {
-        pausedTimerTaskId?.let { taskId ->
-            val task = tasks.find { it.id == taskId }
-            task?.let {
-                activeTimer = taskId
-                timerSeconds = pausedTimerSeconds
-                tasks = tasks.map { if (it.id == taskId) it.copy(isTimerRunning = true) else it }
-                pausedTimerTaskId = null
-                pausedTimerSeconds = 0
-                isTimerPaused = false
-
-                if (sendComments) {
-                    sendTimerComment(it, "Таймер возобновлен")
-                }
-
-                startTimer()
-                println("Timer resumed for task $taskId with ${timerSeconds}s")
+    // Возобновление таймера после системных событий
+    private fun systemResumeTimer() {
+        val currentUserData = getCurrentUserTimerData()
+        if (currentUserData.activeTimerId != null && currentUserData.isSystemPaused) {
+            val task = tasks.find { it.id == currentUserData.activeTimerId }
+            updateCurrentUserTimerData(
+                currentUserData.copy(
+                    isSystemPaused = false
+                )
+            )
+            if (sendComments && task != null) {
+                sendTimerComment(task, "Таймер системно возобновлен", currentUserData.timerSeconds)
             }
+            println("Timer system-resumed for task ${currentUserData.activeTimerId} with ${currentUserData.timerSeconds}s")
         }
     }
+
 
     // Форматирование времени для отображения
     fun formatTime(seconds: Int): String {
@@ -649,22 +665,22 @@ class MainViewModel : ViewModel() {
     }
 
     fun completeTask(task: Task) {
+        val currentUserData = getCurrentUserTimerData()
         // Если есть активный таймер на этой задаче, сначала сохраняем время
-        if (activeTimer == task.id && timerSeconds > 0) {
-            stopTimerAndSaveTime(task)
+        if (currentUserData.activeTimerId == task.id && currentUserData.timerSeconds > 0) {
+            stopTimerAndSaveTime(task, currentUserData.timerSeconds)
             if (sendComments) {
-                sendTimerComment(task, "Задача завершена, таймер остановлен")
+                sendTimerComment(task, "Задача завершена, таймер остановлен", currentUserData.timerSeconds)
             }
-            activeTimer = null
-            timerSeconds = 0
-            tasks = tasks.map { it.copy(isTimerRunning = false) }
+            updateCurrentUserTimerData(UserTimerData()) // Сбрасываем таймер для пользователя
 
             // Ждем секунду, чтобы время сохранилось, потом завершаем задачу
             viewModelScope.launch {
-                delay(1500)
+                delay(1500) // Даем время на сохранение
                 completeTaskInBitrix(task)
             }
         } else {
+            // Если таймер не был активен для этой задачи, или время 0, просто завершаем
             completeTaskInBitrix(task)
         }
     }
@@ -709,11 +725,14 @@ class MainViewModel : ViewModel() {
         sendComments = !sendComments
     }
 
-    private fun startTimer() {
+    private fun startUniversalTimerLoop() {
         viewModelScope.launch {
-            while (activeTimer != null) {
+            while (true) {
                 delay(1000)
-                timerSeconds++
+                val currentUserData = getCurrentUserTimerData()
+                if (currentUserData.activeTimerId != null && !currentUserData.isPausedForUserAction && !currentUserData.isSystemPaused) {
+                    updateCurrentUserTimerData(currentUserData.copy(timerSeconds = currentUserData.timerSeconds + 1))
+                }
             }
         }
     }
@@ -738,16 +757,12 @@ class MainViewModel : ViewModel() {
         // Автоматическая пауза/возобновление таймера
         if (previousStatus == WorkStatus.WORKING &&
             (workStatus == WorkStatus.BREAK || workStatus == WorkStatus.LUNCH)) {
-            // Переходим на перерыв - приостанавливаем таймер
-            if (activeTimer != null) {
-                pauseTimer()
-            }
+            // Переходим на перерыв - системно приостанавливаем таймер
+            systemPauseTimer()
         } else if ((previousStatus == WorkStatus.BREAK || previousStatus == WorkStatus.LUNCH) &&
             workStatus == WorkStatus.WORKING) {
-            // Возвращаемся с перерыва - возобновляем таймер
-            if (pausedTimerTaskId != null) {
-                resumeTimer()
-            }
+            // Возвращаемся с перерыва - системно возобновляем таймер
+            systemResumeTimer()
         }
     }
 
@@ -764,21 +779,15 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             while (true) {
                 delay(300000) // каждые 5 минут
-                // Сохраняем состояние таймера перед обновлением задач
-                val savedActiveTimer = activeTimer
-                val savedTimerSeconds = timerSeconds
-                val savedPausedTaskId = pausedTimerTaskId
-                val savedPausedSeconds = pausedTimerSeconds
-                val savedIsPaused = isTimerPaused
+                // Состояние таймера теперь хранится в userTimerDataMap и будет сохранено при loadTasks
+                val currentUserId = users[currentUserIndex].userId
+                val timerDataBeforeReload = userTimerDataMap[currentUserId]
 
-                loadTasks()
+                loadTasks() // loadTasks теперь сам обрабатывает сохранение/восстановление состояния таймера для текущего пользователя
 
-                // Восстанавливаем состояние таймера после загрузки
-                activeTimer = savedActiveTimer
-                timerSeconds = savedTimerSeconds
-                pausedTimerTaskId = savedPausedTaskId
-                pausedTimerSeconds = savedPausedSeconds
-                isTimerPaused = savedIsPaused
+                // Если после loadTasks таймер для текущего пользователя был сброшен (например, задача исчезла),
+                // а до этого он был активен, то это уже обработано в loadTasks.
+                // Если таймер был активен и задача осталась, его состояние в userTimerDataMap сохранится.
             }
         }
     }
@@ -920,22 +929,27 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Активный таймер (если есть)
-        viewModel.activeTimer?.let { taskId ->
-            val task = viewModel.tasks.find { it.id == taskId }
+        val currentUserTimerData = viewModel.getCurrentUserTimerData()
+
+        // Активный таймер (если есть и не на системной паузе)
+        if (currentUserTimerData.activeTimerId != null && !currentUserTimerData.isSystemPaused) {
+            val task = viewModel.tasks.find { it.id == currentUserTimerData.activeTimerId }
             task?.let {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD))
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (currentUserTimerData.isPausedForUserAction) Color(0xFFFFF9C4) /* Светло-желтый для пользовательской паузы */
+                                         else Color(0xFFE3F2FD) /* Голубой для активного */
+                    )
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp)
                     ) {
                         Text(
-                            text = "🕐 Активный таймер",
+                            text = if (currentUserTimerData.isPausedForUserAction) "⏸️ Таймер приостановлен (пользователем)" else "🕐 Активный таймер",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                            color = if (currentUserTimerData.isPausedForUserAction) Color(0xFFF57F17) else MaterialTheme.colorScheme.primary
                         )
                         Text(
                             text = it.title,
@@ -944,10 +958,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = viewModel.formatTime(viewModel.timerSeconds),
+                            text = viewModel.formatTime(
+                                if (currentUserTimerData.isPausedForUserAction) currentUserTimerData.pausedTimerSecondsForUserAction
+                                else currentUserTimerData.timerSeconds
+                            ),
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                            color = if (currentUserTimerData.isPausedForUserAction) Color(0xFFF57F17) else MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -955,23 +972,23 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             }
         }
 
-        // Приостановленный таймер (если есть)
-        viewModel.pausedTimerTaskId?.let { taskId ->
-            val task = viewModel.tasks.find { it.id == taskId }
+        // Системно приостановленный таймер (если есть)
+        if (currentUserTimerData.activeTimerId != null && currentUserTimerData.isSystemPaused) {
+            val task = viewModel.tasks.find { it.id == currentUserTimerData.activeTimerId }
             task?.let {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)) // Оранжевый для системной паузы
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp)
                     ) {
                         Text(
-                            text = "⏸️ Таймер на паузе (${
+                            text = "⏸️ Таймер на системной паузе (${
                                 when (viewModel.workStatus) {
                                     WorkStatus.BREAK -> "Перерыв"
                                     WorkStatus.LUNCH -> "Обед"
-                                    else -> "Пауза"
+                                    else -> "Системная пауза"
                                 }
                             })",
                             fontSize = 16.sp,
@@ -985,7 +1002,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = viewModel.formatTime(viewModel.pausedTimerSeconds),
+                            text = viewModel.formatTime(currentUserTimerData.timerSeconds), // Показываем текущие секунды активного таймера
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFFFF8F00)
@@ -995,6 +1012,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
+
 
         // Состояние загрузки
         if (viewModel.isLoading) {
@@ -1024,11 +1042,19 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         // Список задач
         LazyColumn {
             items(viewModel.tasks) { task ->
+                val timerData = viewModel.getCurrentUserTimerData()
+                val isTaskActive = timerData.activeTimerId == task.id && !timerData.isSystemPaused && !timerData.isPausedForUserAction
+                val isTaskUserPaused = timerData.pausedTaskIdForUserAction == task.id
+                val isTaskSystemPaused = timerData.activeTimerId == task.id && timerData.isSystemPaused
+
+
                 TaskCard(
                     task = task,
                     onTimerToggle = { viewModel.toggleTimer(it) },
                     onCompleteTask = { viewModel.completeTask(it) },
-                    isPaused = viewModel.pausedTimerTaskId == task.id
+                    isTimerRunningForThisTask = isTaskActive,
+                    isTimerUserPausedForThisTask = isTaskUserPaused,
+                    isTimerSystemPausedForThisTask = isTaskSystemPaused
                 )
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -1080,7 +1106,9 @@ fun TaskCard(
     task: Task,
     onTimerToggle: (Task) -> Unit,
     onCompleteTask: (Task) -> Unit,
-    isPaused: Boolean = false
+    isTimerRunningForThisTask: Boolean,
+    isTimerUserPausedForThisTask: Boolean,
+    isTimerSystemPausedForThisTask: Boolean
 ) {
     var isExpanded by remember { mutableStateOf(false) }
 
@@ -1090,11 +1118,12 @@ fun TaskCard(
             .clickable { isExpanded = !isExpanded },
         colors = CardDefaults.cardColors(
             containerColor = when {
-                task.isCompleted -> Color(0xFFE8F5E8)
-                task.isTimerRunning -> Color(0xFFE3F2FD)
-                isPaused -> Color(0xFFFFF3E0)
-                task.isOverdue -> Color(0xFFFFEBEE)
-                else -> MaterialTheme.colorScheme.surface
+                task.isCompleted -> Color(0xFFE8F5E8) // Зеленый для завершенных
+                isTimerRunningForThisTask -> Color(0xFFE3F2FD) // Голубой для активного таймера
+                isTimerUserPausedForThisTask -> Color(0xFFFFF9C4) // Светло-желтый для пользовательской паузы
+                isTimerSystemPausedForThisTask -> Color(0xFFFFF3E0) // Оранжевый для системной паузы
+                task.isOverdue -> Color(0xFFFFEBEE) // Розовый для просроченных
+                else -> MaterialTheme.colorScheme.surface // Стандартный
             }
         )
     ) {
@@ -1303,18 +1332,22 @@ fun TaskCard(
                 Button(
                     onClick = { onTimerToggle(task) },
                     modifier = Modifier.weight(1f),
+                    enabled = !isTimerSystemPausedForThisTask, // Блокируем кнопку если таймер на системной паузе
                     colors = ButtonDefaults.buttonColors(
                         containerColor = when {
-                            task.isTimerRunning -> Color(0xFFE57373)
-                            isPaused -> Color(0xFFFF8F00)
-                            else -> MaterialTheme.colorScheme.primary
-                        }
+                            isTimerRunningForThisTask -> Color(0xFFE57373) // Красный для стоп
+                            isTimerUserPausedForThisTask -> Color(0xFF66BB6A) // Зеленый для продолжить пользовательскую паузу
+                            isTimerSystemPausedForThisTask -> Color.Gray // Серый, если системная пауза (кнопка disabled)
+                            else -> MaterialTheme.colorScheme.primary // Синий для старт
+                        },
+                        disabledContainerColor = Color.LightGray // Цвет для заблокированной кнопки
                     )
                 ) {
                     Text(
                         text = when {
-                            task.isTimerRunning -> "⏹️ Стоп"
-                            isPaused -> "▶️ Продолжить"
+                            isTimerRunningForThisTask -> "⏹️ Стоп"
+                            isTimerUserPausedForThisTask -> "▶️ Продолжить"
+                            isTimerSystemPausedForThisTask -> "⏸️ Пауза" // Показываем, что на паузе
                             else -> "▶️ Старт"
                         },
                         fontSize = 14.sp
