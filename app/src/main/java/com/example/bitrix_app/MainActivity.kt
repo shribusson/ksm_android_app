@@ -474,6 +474,10 @@ class MainViewModel : ViewModel() {
                                         )
                                     }
                                     checklistsMap = checklistsMap + (taskId to itemsList)
+                                    println("Fetched checklist items for task $taskId:")
+                                    itemsList.forEach { item ->
+                                        println("  - ID: ${item.id}, Title: ${item.title}, IsComplete: ${item.isComplete}")
+                                    }
                                 }
                             } catch (e: Exception) {
                                 println("Error parsing checklist for task $taskId: ${e.message}")
