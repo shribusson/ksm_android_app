@@ -549,6 +549,8 @@ class MainViewModel : ViewModel() {
         val action = if (currentIsComplete) "tasks.task.checklistitem.renew" else "tasks.task.checklistitem.complete"
         val url = "${user.webhookUrl}$action"
 
+        println("Toggling checklist item: URL=$url, TASKID=$taskId, ITEMID=$checklistItemId, Action=${if (currentIsComplete) "renew" else "complete"}")
+
         val formBody = FormBody.Builder()
             .add("TASKID", taskId)
             .add("ITEMID", checklistItemId)
