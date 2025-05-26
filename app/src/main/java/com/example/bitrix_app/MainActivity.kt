@@ -546,7 +546,7 @@ class MainViewModel : ViewModel() {
     fun toggleChecklistItemStatus(taskId: String, checklistItemId: String, currentIsComplete: Boolean) {
         val user = users[currentUserIndex]
         // Исправляем имя метода: добавляем .task. между tasks. и checklistitem.
-        val action = if (currentIsComplete) "tasks.task.checklistitem.renew" else "tasks.task.checklistitem.complete"
+        val action = if (currentIsComplete) "task.checklistitem.renew" else "task.checklistitem.complete"
         val url = "${user.webhookUrl}$action"
 
         println("Toggling checklist item: URL=$url, TASKID=$taskId, ITEMID=$checklistItemId, Action=${if (currentIsComplete) "renew" else "complete"}")
