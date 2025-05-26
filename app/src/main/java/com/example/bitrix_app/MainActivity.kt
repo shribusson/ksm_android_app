@@ -31,7 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.bitrix_app.ui.theme.Bitrix_appTheme
+import com.example.bitrix_app.ui.theme.* // Импортируем все из пакета темы
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.*
@@ -1264,11 +1264,11 @@ fun UserAvatar(user: User, size: Int) {
 @Composable
 fun WorkStatusIcon(workStatus: WorkStatus) {
     val (icon, color, contentColor) = when (workStatus) {
-        WorkStatus.BEFORE_WORK -> "🌅" to Color.Gray to MaterialTheme.colorScheme.onSurface
-        WorkStatus.WORKING -> "💼" to MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
-        WorkStatus.BREAK -> "☕" to StatusOrange to MaterialTheme.colorScheme.onSurfaceVariant // Используем StatusOrange для фона
-        WorkStatus.LUNCH -> "🍽️" to StatusRed to MaterialTheme.colorScheme.onSurfaceVariant // Используем StatusRed для фона (или другой подходящий)
-        WorkStatus.AFTER_WORK -> "🌆" to Color.Gray to MaterialTheme.colorScheme.onSurface
+        WorkStatus.BEFORE_WORK -> Triple("🌅", Color.Gray, MaterialTheme.colorScheme.onSurface)
+        WorkStatus.WORKING -> Triple("💼", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
+        WorkStatus.BREAK -> Triple("☕", StatusOrange, MaterialTheme.colorScheme.onSurfaceVariant) // Используем StatusOrange для фона
+        WorkStatus.LUNCH -> Triple("🍽️", StatusRed, MaterialTheme.colorScheme.onSurfaceVariant) // Используем StatusRed для фона (или другой подходящий)
+        WorkStatus.AFTER_WORK -> Triple("🌆", Color.Gray, MaterialTheme.colorScheme.onSurface)
     }
 
     Text(
@@ -1640,11 +1640,11 @@ fun TaskCard(
                         contentColor = when {
                             isTimerRunningForThisTask -> MaterialTheme.colorScheme.onError
                             isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.onTertiary
-                            isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = ContentAlpha.disabled)
+                            isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = androidx.compose.material3.ContentAlpha.disabled)
                             else -> MaterialTheme.colorScheme.onPrimary
                         },
                         disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
-                        disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = ContentAlpha.disabled)
+                        disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = androidx.compose.material3.ContentAlpha.disabled)
                     )
                 ) {
                     Text(
