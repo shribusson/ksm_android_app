@@ -1363,10 +1363,10 @@ class MainViewModel : ViewModel() {
                         }
                     }
                     
-                    Timber.w("No suitable storage found or 'result' is not a non-empty array for user ${user.userId}. Response: $responseBody")
+                    Timber.w("No suitable storage found or 'result' is not a non-empty array for user ${user.userId}. Response: $responseBody. Ensure the webhook for user ${user.name} (ID: ${user.userId}) has the 'disk' permission scope in Bitrix24.")
                     if (continuation.isActive) continuation.resume(null)
                 } catch (e: Exception) {
-                    Timber.e(e, "Error parsing storage list response for user ${user.userId}. Raw response might have been logged above.")
+                    Timber.e(e, "Error parsing storage list response for user ${user.userId}. Raw response might have been logged above. Ensure the webhook for user ${user.name} (ID: ${user.userId}) has the 'disk' permission scope in Bitrix24.")
                     if (continuation.isActive) continuation.resume(null)
                 } finally {
                     response.close()
