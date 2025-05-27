@@ -175,9 +175,8 @@ class MainViewModel : ViewModel() {
     var logLines by mutableStateOf<List<String>>(emptyList())
         private set
 
-    // Состояние для выбранной темы
-    var selectedTheme by mutableStateOf(AppThemeOptions.SYSTEM)
-        private set
+    // Состояние для выбранной темы для каждого пользователя
+    private var userSelectedThemeMap by mutableStateOf<Map<String, AppThemeOptions>>(emptyMap())
 
 
     // Вспомогательная функция для получения данных таймера текущего пользователя
@@ -205,9 +204,15 @@ class MainViewModel : ViewModel() {
         startUniversalTimerLoop() // Запускаем универсальный цикл таймера
     }
 
+    fun getCurrentUserTheme(): AppThemeOptions {
+        val userId = users[currentUserIndex].userId
+        return userSelectedThemeMap[userId] ?: AppThemeOptions.SYSTEM
+    }
+
     fun selectTheme(theme: AppThemeOptions) {
-        selectedTheme = theme
-        Timber.i("App theme changed to: $theme")
+        val userId = users[currentUserIndex].userId
+        userSelectedThemeMap = userSelectedThemeMap + (userId to theme)
+        Timber.i("App theme changed to: $theme for user $userId (${users[currentUserIndex].name})")
     }
 
     fun switchUser(index: Int) {
@@ -1724,7 +1729,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val viewModel: MainViewModel = viewModel() // viewModel создается здесь
-            Bitrix_appTheme(appTheme = viewModel.selectedTheme) { // Передаем выбранную тему
+            Bitrix_appTheme(appTheme = viewModel.getCurrentUserTheme()) { // Передаем тему текущего пользователя
                 var showLogScreen by remember { mutableStateOf(false) }
 
                 if (showLogScreen) {
@@ -1903,7 +1908,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                             DropdownMenuItem(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (viewModel.selectedTheme == themeOption) {
+                                        if (viewModel.getCurrentUserTheme() == themeOption) { // Проверяем тему текущего пользователя
                                             Text("✓ ", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                                         } else {
                                             Text("   ") // Для выравнивания
