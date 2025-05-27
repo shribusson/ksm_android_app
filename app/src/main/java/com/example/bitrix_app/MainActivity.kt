@@ -1623,6 +1623,7 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var isUserMenuExpanded by remember { mutableStateOf(false) }
     var isSettingsExpanded by remember { mutableStateOf(false) }
+    val context = LocalContext.current // Получаем контекст здесь, в Composable области
 
     Column(
         modifier = Modifier
@@ -1717,9 +1718,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         DropdownMenuItem(
                             text = { Text("Поделиться логами") },
                             onClick = {
-                                // Получаем LocalContext внутри Composable
-                                val currentContext = LocalContext.current
-                                viewModel.shareLogs(currentContext)
+                                viewModel.shareLogs(context) // Используем контекст, полученный из Composable области
                                 isSettingsExpanded = false
                             }
                         )
