@@ -16,6 +16,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -855,41 +857,42 @@ class MainViewModel : ViewModel() {
         })
     }
 
-    // Приостановка таймера ЗАДАЧИ из-за системных событий (перерыв, обед, конец дня)
-    // Не влияет на timeman напрямую, это делает updateWorkStatus
-    private fun systemPauseTaskTimerOnly() {
-        val currentUserData = getCurrentUserTimerData()
-        val user = users[currentUserIndex]
-        if (currentUserData.activeTimerId != null && !currentUserData.isSystemPaused) {
-            val task = tasks.find { it.id == currentUserData.activeTimerId }
-            updateCurrentUserTimerData(
-                currentUserData.copy(
-                    isSystemPaused = true
-                )
-            )
-            if (sendComments && task != null) {
-                sendTimerComment(task, "Таймер задачи системно приостановлен (перерыв/обед/конец дня)", currentUserData.timerSeconds)
+    // Приостановка таймеров ЗАДАЧ для ВСЕХ пользователей из-за системных событий
+    private fun systemPauseAllTaskTimers() {
+        Timber.i("System pausing task timers for ALL users.")
+        val newMap = userTimerDataMap.toMutableMap()
+        var changed = false
+        users.forEach { user ->
+            val userData = userTimerDataMap[user.userId] ?: UserTimerData()
+            if (userData.activeTimerId != null && !userData.isSystemPaused) {
+                newMap[user.userId] = userData.copy(isSystemPaused = true)
+                changed = true
+                // Комментарий здесь не отправляем, т.к. tasks относится к текущему пользователю,
+                // а функция глобальная. Логирование остается.
+                Timber.i("Task timer system-paused for task ${userData.activeTimerId} for user ${user.name} with ${userData.timerSeconds}s")
             }
-            Timber.i("Task timer system-paused for task ${currentUserData.activeTimerId} for user ${user.name} with ${currentUserData.timerSeconds}s")
+        }
+        if (changed) {
+            userTimerDataMap = newMap.toMap()
         }
     }
 
-    // Возобновление таймера ЗАДАЧИ после системных событий
-    // Не влияет на timeman напрямую, это делает updateWorkStatus
-    private fun systemResumeTaskTimerOnly() {
-        val currentUserData = getCurrentUserTimerData()
-        val user = users[currentUserIndex]
-        if (currentUserData.activeTimerId != null && currentUserData.isSystemPaused) {
-            val task = tasks.find { it.id == currentUserData.activeTimerId }
-            updateCurrentUserTimerData(
-                currentUserData.copy(
-                    isSystemPaused = false
-                )
-            )
-            if (sendComments && task != null) {
-                sendTimerComment(task, "Таймер задачи системно возобновлен", currentUserData.timerSeconds)
+    // Возобновление таймеров ЗАДАЧ для ВСЕХ пользователей после системных событий
+    private fun systemResumeAllTaskTimers() {
+        Timber.i("System resuming task timers for ALL users.")
+        val newMap = userTimerDataMap.toMutableMap()
+        var changed = false
+        users.forEach { user ->
+            val userData = userTimerDataMap[user.userId] ?: UserTimerData()
+            if (userData.activeTimerId != null && userData.isSystemPaused) {
+                newMap[user.userId] = userData.copy(isSystemPaused = false)
+                changed = true
+                // Комментарий здесь не отправляем.
+                Timber.i("Task timer system-resumed for task ${userData.activeTimerId} for user ${user.name} with ${userData.timerSeconds}s")
             }
-            Timber.i("Task timer system-resumed for task ${currentUserData.activeTimerId} for user ${user.name} with ${currentUserData.timerSeconds}s")
+        }
+        if (changed) {
+            userTimerDataMap = newMap.toMap()
         }
     }
 
@@ -1021,10 +1024,9 @@ class MainViewModel : ViewModel() {
         val minute = calendar.get(Calendar.MINUTE)
         val currentMinutes = hour * 60 + minute
 
-        val previousStatus = workStatus
-        val currentUser = users[currentUserIndex] // Получаем текущего пользователя
+        val previousGlobalStatus = workStatus // Глобальный предыдущий статус
 
-        val newWorkStatus = when {
+        val newGlobalWorkStatus = when { // Новый глобальный статус
             currentMinutes < 7 * 60 + 50 -> WorkStatus.BEFORE_WORK // До 07:50
             currentMinutes in (9 * 60 + 45)..(10 * 60 + 0) -> WorkStatus.BREAK // 09:45 - 10:00
             currentMinutes in (12 * 60 + 0)..(12 * 60 + 48) -> WorkStatus.LUNCH // 12:00 - 12:48
@@ -1033,34 +1035,45 @@ class MainViewModel : ViewModel() {
             else -> WorkStatus.WORKING
         }
 
-        if (previousStatus != newWorkStatus) {
-            Timber.i("Work status changing for user ${currentUser.name} from $previousStatus to $newWorkStatus")
-            workStatus = newWorkStatus // Обновляем статус
+        if (previousGlobalStatus != newGlobalWorkStatus) {
+            Timber.i("Global work status changing from $previousGlobalStatus to $newGlobalWorkStatus")
+            workStatus = newGlobalWorkStatus // Обновляем глобальный статус для UI
 
-            when {
-                // Начало рабочего дня (из BEFORE_WORK) или возобновление работы (из BREAK/LUNCH)
-                (previousStatus == WorkStatus.BEFORE_WORK || previousStatus == WorkStatus.BREAK || previousStatus == WorkStatus.LUNCH) && workStatus == WorkStatus.WORKING -> {
-                    timemanOpenWorkDay(currentUser)
-                    systemResumeTaskTimerOnly() // Возобновляем таймер задачи, если он был на системной паузе
-                }
-                // Уход на перерыв/обед
-                previousStatus == WorkStatus.WORKING && (workStatus == WorkStatus.BREAK || workStatus == WorkStatus.LUNCH) -> {
-                    timemanPauseWorkDay(currentUser)
-                    systemPauseTaskTimerOnly() // Приостанавливаем таймер задачи
-                }
-                // Конец рабочего дня
-                previousStatus == WorkStatus.WORKING && workStatus == WorkStatus.AFTER_WORK -> {
-                    timemanCloseWorkDay(currentUser)
-                    systemPauseTaskTimerOnly() // Приостанавливаем таймер задачи
-                }
-                // Другие переходы (например, BREAK -> LUNCH) не требуют действий с timeman или таймером задачи
-                else -> {
-                    Timber.d("Work status changed from $previousStatus to $workStatus, no specific timeman/task_timer action required for this transition.")
+            users.forEach { user -> // Применяем действия timeman для КАЖДОГО пользователя
+                Timber.d("Applying timeman actions for user ${user.name} due to global status change from $previousGlobalStatus to $newGlobalWorkStatus")
+                when {
+                    // Начало рабочего дня или возобновление работы
+                    (previousGlobalStatus == WorkStatus.BEFORE_WORK || previousGlobalStatus == WorkStatus.BREAK || previousGlobalStatus == WorkStatus.LUNCH) && newGlobalWorkStatus == WorkStatus.WORKING -> {
+                        timemanOpenWorkDay(user)
+                    }
+                    // Уход на перерыв/обед
+                    previousGlobalStatus == WorkStatus.WORKING && (newGlobalWorkStatus == WorkStatus.BREAK || newGlobalWorkStatus == WorkStatus.LUNCH) -> {
+                        timemanPauseWorkDay(user)
+                    }
+                    // Конец рабочего дня
+                    previousGlobalStatus == WorkStatus.WORKING && newGlobalWorkStatus == WorkStatus.AFTER_WORK -> {
+                        timemanCloseWorkDay(user)
+                    }
+                    else -> {
+                        Timber.d("No specific timeman action for user ${user.name} for transition from $previousGlobalStatus to $newGlobalWorkStatus.")
+                    }
                 }
             }
+
+            // Обновляем состояние системной паузы для таймеров ЗАДАЧ ВСЕХ пользователей
+            when {
+                newGlobalWorkStatus == WorkStatus.WORKING && (previousGlobalStatus == WorkStatus.BREAK || previousGlobalStatus == WorkStatus.LUNCH || previousGlobalStatus == WorkStatus.BEFORE_WORK) -> {
+                    systemResumeAllTaskTimers()
+                }
+                (newGlobalWorkStatus == WorkStatus.BREAK || newGlobalWorkStatus == WorkStatus.LUNCH || newGlobalWorkStatus == WorkStatus.AFTER_WORK) && previousGlobalStatus == WorkStatus.WORKING -> {
+                    systemPauseAllTaskTimers()
+                }
+            }
+
         } else {
             // Статус не изменился, но если мы в рабочем состоянии и день не открыт (например, после перезапуска приложения), пытаемся открыть.
             // Это более сложная логика, требующая проверки timeman.status, пока опустим для простоты.
+            // Можно добавить проверку и вызов timemanOpenWorkDay для всех, если newGlobalWorkStatus == WorkStatus.WORKING и их timeman.status != 'OPENED'
         }
     }
 
@@ -1184,6 +1197,22 @@ class MainViewModel : ViewModel() {
     }
 
     fun getCurrentUser() = users[currentUserIndex]
+
+    fun recordAndAttachAudioComment(task: Task) {
+        // TODO: Реализовать запись аудио и прикрепление к задаче
+        // 1. Запросить разрешение RECORD_AUDIO (уже добавлено в Manifest)
+        // 2. Реализовать UI для старта/остановки записи (можно использовать состояние в ViewModel)
+        // 3. Использовать MediaRecorder для записи аудио в файл.
+        // 4. После записи, отправить файл как комментарий к задаче.
+        //    Это может потребовать метода API Битрикс для загрузки файлов (disk.storage.uploadfile)
+        //    а затем прикрепления файла к комментарию (task.commentitem.add с UF_CRM_TASK = ID файла).
+        Timber.i("recordAndAttachAudioComment called for task ${task.id}. Functionality not yet implemented.")
+        viewModelScope.launch {
+            errorMessage = "Запись аудио для задачи ${task.id} еще не реализована."
+            delay(3000)
+            errorMessage = null
+        }
+    }
 }
 
 // UI компоненты
@@ -1727,7 +1756,7 @@ fun TaskCard(
                 val isLoadingChecklist = viewModel.loadingChecklistMap[task.id] == true
                 if (isLoadingChecklist) {
                     CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                } else if (!checklist.isNullOrEmpty()) {
+                } else if (!checklist.isNullOrEmpty() && checklist.any { !it.isComplete }) { // Скрываем, если все пункты выполнены
                     Text(
                         text = "Чек-лист:",
                         fontSize = 16.sp, // Увеличиваем шрифт
@@ -1829,7 +1858,7 @@ fun TaskCard(
             // Кнопки действий
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp) // Увеличиваем расстояние между кнопками
+                horizontalArrangement = Arrangement.spacedBy(8.dp) // Немного уменьшим расстояние, если добавляем кнопку
             ) {
                 // Кнопка таймера
                 Button(
@@ -1877,6 +1906,23 @@ fun TaskCard(
                         Text(
                             text = "✅ Завершить",
                             fontSize = 16.sp // Увеличиваем шрифт
+                        )
+                    }
+                }
+
+                // Кнопка записи аудиокомментария (только для незавершенных задач)
+                if (!task.isCompleted) {
+                    IconButton(
+                        onClick = { viewModel.recordAndAttachAudioComment(task) },
+                        modifier = Modifier.heightIn(min = 52.dp)
+                            .background(MaterialTheme.colorScheme.secondaryContainer, CircleShape)
+                            .padding(horizontal = 8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Mic,
+                            contentDescription = "Записать аудиокомментарий",
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(28.dp)
                         )
                     }
                 }
