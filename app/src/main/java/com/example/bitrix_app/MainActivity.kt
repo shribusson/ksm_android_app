@@ -29,6 +29,7 @@ import android.Manifest // Для запроса разрешений
 import android.content.pm.PackageManager // Для проверки разрешений
 import android.media.MediaRecorder
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext // Для LocalContext.current
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.core.content.ContextCompat // Для проверки разрешений
