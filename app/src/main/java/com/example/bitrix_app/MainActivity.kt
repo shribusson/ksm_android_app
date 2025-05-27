@@ -1389,20 +1389,24 @@ class MainViewModel : ViewModel() {
                                 val entityId = storageObject.optString("ENTITY_ID")
                                 val entityType = storageObject.optString("ENTITY_TYPE")
                                 val id = storageObject.optString("ID")
+                                val name = storageObject.optString("NAME", "N/A") // Логируем также имя хранилища для информации
+                                Timber.d("Checking storage object: ID=$id, NAME=$name, ENTITY_ID=$entityId, ENTITY_TYPE=$entityType for user ${user.userId}")
 
                                 if (id.isNotEmpty() && entityId == user.userId && entityType == "USER") {
-                                    Timber.i("Found matching user storage: ID=$id, ENTITY_ID=$entityId, ENTITY_TYPE=$entityType for user ${user.userId}")
+                                    Timber.i("Found matching user storage: ID=$id, NAME=$name, ENTITY_ID=$entityId, ENTITY_TYPE=$entityType for user ${user.userId}")
                                     if (continuation.isActive) continuation.resume(id)
                                     return
                                 }
                             }
                             // Если не нашли точное совпадение, можно попробовать взять первое хранилище типа USER, если оно есть
+                            Timber.d("Exact match for user ${user.userId} not found. Looking for first available 'USER' type storage.")
                             for (i in 0 until resultArray.length()) {
                                 val storageObject = resultArray.getJSONObject(i)
                                 val entityType = storageObject.optString("ENTITY_TYPE")
                                 val id = storageObject.optString("ID")
+                                val name = storageObject.optString("NAME", "N/A")
                                 if (id.isNotEmpty() && entityType == "USER") {
-                                    Timber.w("Could not find exact user storage for ${user.userId}. Using first available USER storage: ID=$id, ENTITY_TYPE=$entityType")
+                                    Timber.w("Could not find exact user storage for ${user.userId}. Using first available USER storage: ID=$id, NAME=$name, ENTITY_TYPE=$entityType")
                                     if (continuation.isActive) continuation.resume(id)
                                     return
                                 }
