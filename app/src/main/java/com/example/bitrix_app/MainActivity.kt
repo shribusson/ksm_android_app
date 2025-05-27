@@ -1478,13 +1478,19 @@ class MainViewModel : ViewModel() {
                     val json = JSONObject(responseBodyString)
                     if (json.has("result")) {
                         val resultObject = json.getJSONObject("result")
-                        val uploadedFileId = resultObject.optString("ID")
-                        if (uploadedFileId.isNotEmpty()) {
-                            if (continuation.isActive) continuation.resume(uploadedFileId)
+                        var idForBbCode = resultObject.optString("FILE_ID") // Пытаемся получить FILE_ID (b_file ID)
+                        if (idForBbCode.isEmpty()) {
+                            Timber.w("FILE_ID is empty in uploadFileToStorage response for ${file.name}. Falling back to disk object ID.")
+                            idForBbCode = resultObject.optString("ID") // Если FILE_ID пуст, используем ID объекта диска
+                        }
+
+                        if (idForBbCode.isNotEmpty()) {
+                            Timber.i("Using ID '$idForBbCode' (tried FILE_ID then ID) for file ${file.name} in BBCode.")
+                            if (continuation.isActive) continuation.resume(idForBbCode)
                             return
                         }
                     }
-                    Timber.w("Uploaded file ID not found in response for ${file.name}")
+                    Timber.w("Neither FILE_ID nor ID found or both are empty in upload response for ${file.name}")
                     if (continuation.isActive) continuation.resume(null)
                 } catch (e: Exception) {
                     Timber.e(e, "Error parsing file upload response for ${file.name}")
