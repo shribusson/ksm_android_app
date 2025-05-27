@@ -1438,7 +1438,7 @@ class MainViewModel : ViewModel() {
             .addFormDataPart("id", storageId) // ID хранилища
             .addFormDataPart("data[NAME]", file.name) // Имя файла
             .addFormDataPart(
-                "fileContent[]", // Изменено имя параметра для соответствия ожиданиям PHP-массива
+                "fileContent", // Возвращаем имя параметра к исходному
                 file.name,
                 file.asRequestBody("audio/m4a".toMediaTypeOrNull())
             )
