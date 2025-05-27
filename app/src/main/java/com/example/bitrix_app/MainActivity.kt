@@ -46,11 +46,15 @@ import com.example.bitrix_app.ui.theme.* // Импортируем все из �
 import timber.log.Timber
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.*
+import kotlin.coroutines.resume
 
 // Модели данных
 data class User(val name: String, val webhookUrl: String, val userId: String, val avatar: String)
@@ -1300,30 +1304,204 @@ class MainViewModel : ViewModel() {
     }
 
 
+    private suspend fun fetchUserStorageId(user: User): String? = suspendCancellableCoroutine { continuation ->
+        val url = "${user.webhookUrl}disk.storage.getlist?filter[ENTITY_TYPE]=USER&filter[ENTITY_ID]=${user.userId}"
+        val request = Request.Builder().url(url).build()
+        Timber.d("Fetching storage ID for user ${user.userId} with URL: $url")
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                Timber.e(e, "Failed to fetch storage list for user ${user.userId}")
+                if (continuation.isActive) continuation.resume(null)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                try {
+                    if (!response.isSuccessful) {
+                        Timber.w("Fetch storage list failed for user ${user.userId}. Code: ${response.code}, Message: ${response.message}")
+                        if (continuation.isActive) continuation.resume(null)
+                        return
+                    }
+                    val responseBody = response.body?.string()
+                    if (responseBody == null) {
+                        Timber.w("Fetch storage list response body is null for user ${user.userId}")
+                        if (continuation.isActive) continuation.resume(null)
+                        return
+                    }
+                    Timber.d("Storage list response for user ${user.userId}: $responseBody")
+                    val json = JSONObject(responseBody)
+                    if (json.has("result")) {
+                        val resultArray = json.getJSONArray("result")
+                        if (resultArray.length() > 0) {
+                            // Берем ID первого хранилища пользователя
+                            val storageObject = resultArray.getJSONObject(0)
+                            val storageId = storageObject.optString("ID")
+                            if (storageId.isNotEmpty()) {
+                                if (continuation.isActive) continuation.resume(storageId)
+                                return
+                            }
+                        }
+                    }
+                    Timber.w("No suitable storage found or error in response for user ${user.userId}")
+                    if (continuation.isActive) continuation.resume(null)
+                } catch (e: Exception) {
+                    Timber.e(e, "Error parsing storage list response for user ${user.userId}")
+                    if (continuation.isActive) continuation.resume(null)
+                } finally {
+                    response.close()
+                }
+            }
+        })
+        continuation.invokeOnCancellation {
+            Timber.d("fetchUserStorageId coroutine cancelled for user ${user.userId}")
+        }
+    }
+
+    private suspend fun uploadFileToStorage(user: User, storageId: String, file: java.io.File): String? = suspendCancellableCoroutine { continuation ->
+        val url = "${user.webhookUrl}disk.storage.uploadfile"
+        Timber.d("Uploading file ${file.name} to storage $storageId for user ${user.userId}. URL: $url")
+
+        val requestBody = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("id", storageId) // ID хранилища
+            .addFormDataPart("data[NAME]", file.name) // Имя файла
+            .addFormDataPart(
+                "fileContent",
+                file.name,
+                file.asRequestBody("audio/m4a".toMediaTypeOrNull())
+            )
+            .build()
+
+        val request = Request.Builder().url(url).post(requestBody).build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                Timber.e(e, "Failed to upload file ${file.name}")
+                if (continuation.isActive) continuation.resume(null)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                try {
+                    if (!response.isSuccessful) {
+                        Timber.w("File upload failed for ${file.name}. Code: ${response.code}, Message: ${response.message}")
+                        if (continuation.isActive) continuation.resume(null)
+                        return
+                    }
+                    val responseBody = response.body?.string()
+                    if (responseBody == null) {
+                        Timber.w("File upload response body is null for ${file.name}")
+                        if (continuation.isActive) continuation.resume(null)
+                        return
+                    }
+                    Timber.d("File upload response for ${file.name}: $responseBody")
+                    val json = JSONObject(responseBody)
+                    if (json.has("result")) {
+                        val resultObject = json.getJSONObject("result")
+                        val uploadedFileId = resultObject.optString("ID")
+                        if (uploadedFileId.isNotEmpty()) {
+                            if (continuation.isActive) continuation.resume(uploadedFileId)
+                            return
+                        }
+                    }
+                    Timber.w("Uploaded file ID not found in response for ${file.name}")
+                    if (continuation.isActive) continuation.resume(null)
+                } catch (e: Exception) {
+                    Timber.e(e, "Error parsing file upload response for ${file.name}")
+                    if (continuation.isActive) continuation.resume(null)
+                } finally {
+                    response.close()
+                }
+            }
+        })
+        continuation.invokeOnCancellation {
+            Timber.d("uploadFileToStorage coroutine cancelled for file ${file.name}")
+        }
+    }
+
+    private suspend fun addCommentToTask(user: User, taskId: String, uploadedFileId: String): Boolean = suspendCancellableCoroutine { continuation ->
+        val url = "${user.webhookUrl}task.commentitem.add"
+        val commentText = "[DISK FILE ID=$uploadedFileId]" // BBCode для файла
+        Timber.d("Adding comment to task $taskId with file ID $uploadedFileId. User: ${user.name}. URL: $url. Comment: $commentText")
+
+        val formBody = FormBody.Builder()
+            .add("TASK_ID", taskId)
+            .add("FIELDS[POST_MESSAGE]", commentText)
+            .add("FIELDS[AUTHOR_ID]", user.userId)
+            .build()
+
+        val request = Request.Builder().url(url).post(formBody).build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                Timber.e(e, "Failed to add comment to task $taskId")
+                if (continuation.isActive) continuation.resume(false)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                var success = false
+                try {
+                    val responseBody = response.body?.string() // Читаем тело ответа один раз
+                    if (!response.isSuccessful) {
+                        Timber.w("Add comment failed for task $taskId. Code: ${response.code}, Message: ${response.message}. Body: $responseBody")
+                    } else {
+                        Timber.d("Add comment response for task $taskId: $responseBody")
+                        if (responseBody != null) {
+                            val json = JSONObject(responseBody)
+                            success = json.has("result") && json.optInt("result", 0) > 0
+                            if (!success) {
+                                Timber.w("Add comment response indicates failure or no comment ID for task $taskId. Response: $responseBody")
+                            }
+                        } else {
+                            Timber.w("Add comment response body is null for task $taskId")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "Error parsing add comment response for task $taskId")
+                } finally {
+                    response.close()
+                    if (continuation.isActive) continuation.resume(success)
+                }
+            }
+        })
+        continuation.invokeOnCancellation {
+            Timber.d("addCommentToTask coroutine cancelled for task $taskId")
+        }
+    }
+
     private fun uploadAudioAndCreateComment(task: Task, audioFileToUpload: java.io.File, context: Context) {
         viewModelScope.launch {
-            delay(1000)
-            audioProcessingMessage = "Загрузка '${audioFileToUpload.name}'..."
-            Timber.i("TODO: Implement file upload for ${audioFileToUpload.absolutePath} (${audioFileToUpload.length()} bytes) for task ${task.id}")
-            // --- Начало блока TODO для API Битрикс ---
-            // 1. Загрузить audioFileToUpload с помощью disk.storage.uploadfile
-            //    - Потребуется определить ID хранилища (disk ID).
-            //    - Сформировать MultipartBody запрос.
-            //    - Получить ID загруженного файла из ответа.
-            // 2. Создать комментарий к задаче с помощью task.commentitem.add
-            //    - В тексте комментария использовать BBCode для файла: "[DISK FILE ID=XXX]"
-            // --- Конец блока TODO для API Битрикс ---
+            audioProcessingMessage = "Подготовка к загрузке '${audioFileToUpload.name}'..."
+            val user = users[currentUserIndex]
 
-            delay(2000)
-            val uploadSuccess = true // Заглушка
+            val storageId = fetchUserStorageId(user)
+            if (storageId == null) {
+                audioProcessingMessage = "Ошибка: Не удалось найти хранилище для пользователя."
+                Timber.e("Failed to get storage ID for user ${user.userId}")
+                resetAudioRecordingState(clearMessageDelay = 5000L)
+                return@launch
+            }
+            Timber.d("Using storage ID: $storageId for user ${user.userId}")
 
-            if (uploadSuccess) {
-                audioProcessingMessage = "Аудио для '${task.title}' готово (TODO: прикреплено)."
-                Timber.i("Simulated: Audio file for task ${task.id} uploaded and comment created.")
+            audioProcessingMessage = "Загрузка файла '${audioFileToUpload.name}'..."
+            val uploadedFileId = uploadFileToStorage(user, storageId, audioFileToUpload)
+            if (uploadedFileId == null) {
+                audioProcessingMessage = "Ошибка: Не удалось загрузить аудиофайл."
+                Timber.e("Failed to upload audio file ${audioFileToUpload.name} for task ${task.id}")
+                resetAudioRecordingState(clearMessageDelay = 5000L)
+                return@launch
+            }
+            Timber.i("File ${audioFileToUpload.name} uploaded successfully. ID: $uploadedFileId")
+
+            audioProcessingMessage = "Создание комментария для '${task.title}'..."
+            val commentAdded = addCommentToTask(user, task.id, uploadedFileId)
+
+            if (commentAdded) {
+                audioProcessingMessage = "Аудиокомментарий успешно добавлен к '${task.title}'."
+                Timber.i("Audio comment successfully added to task ${task.id}")
                 audioFileToUpload.delete()
             } else {
-                audioProcessingMessage = "Ошибка загрузки аудио для '${task.title}'."
-                Timber.w("Simulated: Failed to upload audio or create comment for task ${task.id}.")
+                audioProcessingMessage = "Ошибка: Не удалось добавить комментарий к задаче '${task.title}'."
+                Timber.e("Failed to add comment to task ${task.id} after uploading file $uploadedFileId")
             }
             resetAudioRecordingState(clearMessageDelay = 5000L)
         }
