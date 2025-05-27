@@ -1436,10 +1436,10 @@ class MainViewModel : ViewModel() {
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("id", storageId) // ID хранилища
-            .addFormDataPart("data[NAME]", file.name) // Имя файла
+            // .addFormDataPart("data[NAME]", file.name) // Попробуем убрать этот параметр
             .addFormDataPart(
-                "fileContent", // Возвращаем имя параметра к исходному
-                file.name,
+                "fileContent",
+                file.name, // Имя файла будет в Content-Disposition этой части
                 file.asRequestBody("audio/m4a".toMediaTypeOrNull())
             )
             .build()
