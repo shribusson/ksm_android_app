@@ -2124,12 +2124,14 @@ fun UserAvatar(user: User, size: Int) {
 
 @Composable
 fun WorkStatusIcon(workStatus: WorkStatus) {
-    val (icon, color, contentColor) = when (workStatus) {
-        WorkStatus.BEFORE_WORK -> Triple("🌅", Color.Gray, MaterialTheme.colorScheme.onSurface)
-        WorkStatus.WORKING -> Triple("💼", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
-        WorkStatus.BREAK -> Triple("☕", StatusOrange, MaterialTheme.colorScheme.onSurfaceVariant) // Используем StatusOrange для фона
-        WorkStatus.LUNCH -> Triple("🍽️", StatusRed, MaterialTheme.colorScheme.onSurfaceVariant) // Используем StatusRed для фона (или другой подходящий)
-        WorkStatus.AFTER_WORK -> Triple("🌆", Color.Gray, MaterialTheme.colorScheme.onSurface)
+    val (icon, color, contentColor) = remember(workStatus, MaterialTheme.colorScheme, StatusOrange, StatusRed) {
+        when (workStatus) {
+            WorkStatus.BEFORE_WORK -> Triple("🌅", Color.Gray, MaterialTheme.colorScheme.onSurface)
+            WorkStatus.WORKING -> Triple("💼", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
+            WorkStatus.BREAK -> Triple("☕", StatusOrange, MaterialTheme.colorScheme.onSurfaceVariant)
+            WorkStatus.LUNCH -> Triple("🍽️", StatusRed, MaterialTheme.colorScheme.onSurfaceVariant)
+            WorkStatus.AFTER_WORK -> Triple("🌆", Color.Gray, MaterialTheme.colorScheme.onSurface)
+        }
     }
 
     Text(
@@ -2168,21 +2170,31 @@ fun TaskCard(
         }
     }
 
+    val cardContainerColor = remember(
+        task.isCompleted,
+        isTimerRunningForThisTask,
+        isTimerUserPausedForThisTask,
+        isTimerSystemPausedForThisTask,
+        task.isOverdue,
+        MaterialTheme.colorScheme.surfaceVariant,
+        StatusGreen, StatusBlue, StatusYellow, StatusOrange, StatusRed
+    ) {
+        when {
+            task.isCompleted -> StatusGreen
+            isTimerRunningForThisTask -> StatusBlue
+            isTimerUserPausedForThisTask -> StatusYellow
+            isTimerSystemPausedForThisTask -> StatusOrange
+            task.isOverdue -> StatusRed
+            else -> MaterialTheme.colorScheme.surfaceVariant
+        }
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { isExpanded = !isExpanded },
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp), // Увеличиваем тень для TaskCard
-        colors = CardDefaults.elevatedCardColors( // Используем elevatedCardColors
-            containerColor = when {
-                task.isCompleted -> StatusGreen
-                isTimerRunningForThisTask -> StatusBlue
-                isTimerUserPausedForThisTask -> StatusYellow
-                isTimerSystemPausedForThisTask -> StatusOrange
-                task.isOverdue -> StatusRed
-                else -> MaterialTheme.colorScheme.surfaceVariant // Используем surfaceVariant для стандартного состояния
-            }
-        )
+        colors = CardDefaults.elevatedCardColors(containerColor = cardContainerColor)
     ) {
         Column(
             modifier = Modifier.padding(16.dp) // Стандартный отступ
@@ -2217,23 +2229,30 @@ fun TaskCard(
                     )
                 }
 
+                val statusTextColor = remember(task.isCompleted, task.isInProgress, task.isPending, MaterialTheme.colorScheme, StatusOrange) {
+                    when {
+                        task.isCompleted -> MaterialTheme.colorScheme.tertiary
+                        task.isInProgress -> MaterialTheme.colorScheme.primary
+                        task.isPending -> StatusOrange 
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                }
+                val statusTextBackgroundColor = remember(task.isCompleted, task.isInProgress, task.isPending, MaterialTheme.colorScheme, StatusOrange) {
+                    when {
+                        task.isCompleted -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+                        task.isInProgress -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                        task.isPending -> StatusOrange.copy(alpha = 0.3f)
+                        else -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                    }
+                }
+
                 Text(
                     text = task.statusText,
                     fontSize = 14.sp, // Увеличиваем шрифт
-                    color = when { // Используем цвета из темы или определенные статусные
-                        task.isCompleted -> MaterialTheme.colorScheme.tertiary
-                        task.isInProgress -> MaterialTheme.colorScheme.primary
-                        task.isPending -> StatusOrange // или другой подходящий
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
+                    color = statusTextColor,
                     modifier = Modifier
                         .background(
-                            when {
-                                task.isCompleted -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
-                                task.isInProgress -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                                task.isPending -> StatusOrange.copy(alpha = 0.3f)
-                                else -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
-                            },
+                            statusTextBackgroundColor,
                             CircleShape
                         )
                         .padding(horizontal = 10.dp, vertical = 5.dp) // Увеличиваем отступы
@@ -2248,14 +2267,17 @@ fun TaskCard(
                 (task.timeSpent.toFloat() / task.timeEstimate.toFloat()).coerceAtMost(1f)
             } else 0f
 
-            LinearProgressIndicator(
-                progress = progress,
-                modifier = Modifier.fillMaxWidth().height(8.dp), // Увеличиваем толщину
-                color = when {
+            val progressIndicatorColor = remember(task.isOverdue, progress, ProgressBarRed, ProgressBarOrange, ProgressBarGreen) {
+                when {
                     task.isOverdue -> ProgressBarRed
                     progress > 0.8f -> ProgressBarOrange
                     else -> ProgressBarGreen
-                },
+                }
+            }
+            LinearProgressIndicator(
+                progress = progress,
+                modifier = Modifier.fillMaxWidth().height(8.dp), // Увеличиваем толщину
+                color = progressIndicatorColor,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
 
@@ -2272,10 +2294,13 @@ fun TaskCard(
                     fontSize = 14.sp, // Увеличиваем шрифт
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                val progressTextColor = remember(task.isOverdue, MaterialTheme.colorScheme.error, MaterialTheme.colorScheme.onSurfaceVariant) {
+                    if (task.isOverdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                }
                 Text(
                     text = "${task.progressPercent}%",
                     fontSize = 14.sp, // Увеличиваем шрифт
-                    color = if (task.isOverdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = progressTextColor
                 )
             }
 
@@ -2335,11 +2360,14 @@ fun TaskCard(
                                     fontSize = 14.sp, // Увеличиваем шрифт
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                val spentTimeColor = remember(task.isOverdue, MaterialTheme.colorScheme.error, ProgressBarGreen) {
+                                    if (task.isOverdue) MaterialTheme.colorScheme.error else ProgressBarGreen
+                                }
                                 Text(
                                     text = "${task.timeSpent / 3600}:${String.format("%02d", (task.timeSpent % 3600) / 60)}",
                                     fontSize = 16.sp, // Увеличиваем шрифт
                                     fontWeight = FontWeight.Bold,
-                                    color = if (task.isOverdue) MaterialTheme.colorScheme.error else ProgressBarGreen
+                                    color = spentTimeColor
                                 )
                             }
 
@@ -2363,15 +2391,18 @@ fun TaskCard(
                                     fontSize = 14.sp, // Увеличиваем шрифт
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                Text(
-                                    text = "${task.progressPercent}%",
-                                    fontSize = 16.sp, // Увеличиваем шрифт
-                                    fontWeight = FontWeight.Bold,
-                                    color = when {
+                                val detailedProgressColor = remember(task.progressPercent, ProgressBarRed, ProgressBarOrange, ProgressBarGreen) {
+                                    when {
                                         task.progressPercent >= 100 -> ProgressBarRed
                                         task.progressPercent >= 80 -> ProgressBarOrange
                                         else -> ProgressBarGreen
                                     }
+                                }
+                                Text(
+                                    text = "${task.progressPercent}%",
+                                    fontSize = 16.sp, // Увеличиваем шрифт
+                                    fontWeight = FontWeight.Bold,
+                                    color = detailedProgressColor
                                 )
                             }
                         }
@@ -2413,10 +2444,13 @@ fun TaskCard(
                                 )
                             )
                             Spacer(modifier = Modifier.width(8.dp)) // Отступ между чекбоксом и текстом
+                            val checklistItemColor = remember(item.isComplete, MaterialTheme.colorScheme.onSurfaceVariant, MaterialTheme.colorScheme.onSurface) {
+                                if (item.isComplete) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                            }
                             Text(
                                 text = item.title,
                                 fontSize = 16.sp, // Увеличиваем шрифт
-                                color = if (item.isComplete) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                                color = checklistItemColor
                             )
                         }
                     }
@@ -2457,15 +2491,18 @@ fun TaskCard(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
+                                    val subtaskStatusColor = remember(subtask.isCompleted, subtask.isInProgress, subtask.isPending, MaterialTheme.colorScheme, StatusOrange) {
+                                        when { 
+                                            subtask.isCompleted -> MaterialTheme.colorScheme.tertiary
+                                            subtask.isInProgress -> MaterialTheme.colorScheme.primary
+                                            subtask.isPending -> StatusOrange 
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
+                                    }
                                     Text(
                                         text = "Статус: ${subtask.statusText}",
                                         fontSize = 14.sp, // Увеличиваем шрифт
-                                        color = when { // Используем цвета из темы или определенные статусные
-                                            subtask.isCompleted -> MaterialTheme.colorScheme.tertiary
-                                            subtask.isInProgress -> MaterialTheme.colorScheme.primary
-                                            subtask.isPending -> StatusOrange // или другой подходящий
-                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                        }
+                                        color = subtaskStatusColor
                                     )
                                     Text(
                                         text = "Время: ${subtask.formattedTime}",
@@ -2526,11 +2563,13 @@ fun TaskCard(
                     Button(
                         onClick = { onCompleteTask(task) },
                         modifier = Modifier.weight(1f).heightIn(min = 52.dp), // Увеличиваем высоту кнопки
-                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp), // Добавляем тень кнопке
-                        colors = ButtonDefaults.elevatedButtonColors( // Используем elevatedButtonColors
-                            containerColor = ProgressBarGreen, // Используем наш зеленый для завершения
-                            contentColor = MaterialTheme.colorScheme.onPrimary // или другой контрастный
-                        )
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
+                        colors = remember(ProgressBarGreen, MaterialTheme.colorScheme.onPrimary) {
+                            ButtonDefaults.elevatedButtonColors(
+                                containerColor = ProgressBarGreen,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        }
                     ) {
                         Icon(Icons.Filled.Check, contentDescription = "Завершить", modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -2569,16 +2608,25 @@ fun TaskCard(
                             .heightIn(min = 52.dp)
                             .shadow(elevation = 2.dp, shape = CircleShape) // Тень для IconButton
                             .background(
-                                if (isCurrentlyRecordingThisTask) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
-                                CircleShape
+                                color = remember(isCurrentlyRecordingThisTask, MaterialTheme.colorScheme) {
+                                    if (isCurrentlyRecordingThisTask) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                                },
+                                shape = CircleShape
                             )
                             .padding(horizontal = 8.dp),
                         enabled = !viewModel.isRecordingAudio || isCurrentlyRecordingThisTask // Кнопка активна если не идет запись ИЛИ идет запись именно этой задачи
                     ) {
+                        val iconAndTint = remember(isCurrentlyRecordingThisTask, MaterialTheme.colorScheme) {
+                            if (isCurrentlyRecordingThisTask) {
+                                Triple(Icons.Filled.Stop, "Остановить запись", MaterialTheme.colorScheme.onErrorContainer)
+                            } else {
+                                Triple(Icons.Filled.Mic, "Записать аудиокомментарий", MaterialTheme.colorScheme.onSecondaryContainer)
+                            }
+                        }
                         Icon(
-                            imageVector = if (isCurrentlyRecordingThisTask) Icons.Filled.Stop else Icons.Filled.Mic,
-                            contentDescription = if (isCurrentlyRecordingThisTask) "Остановить запись" else "Записать аудиокомментарий",
-                            tint = if (isCurrentlyRecordingThisTask) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                            imageVector = iconAndTint.first,
+                            contentDescription = iconAndTint.second,
+                            tint = iconAndTint.third,
                             modifier = Modifier.size(28.dp)
                         )
                     }
