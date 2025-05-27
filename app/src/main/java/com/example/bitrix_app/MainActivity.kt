@@ -1641,7 +1641,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     onClick = { isUserMenuExpanded = true },
                     modifier = Modifier.size(60.dp) // Увеличиваем размер кнопки аватара
                 ) {
-                    UserAvatar(user = viewModel.getCurrentUser(), size = 60) // Увеличиваем аватар
+                    val currentUser = viewModel.getCurrentUser()
+                    UserAvatar(user = currentUser, size = 60) // Увеличиваем аватар
                 }
 
                 DropdownMenu(
