@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext // Для LocalContext.current
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.core.content.ContextCompat // Для проверки разрешений
+import androidx.core.content.FileProvider // Для FileProvider
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1547,6 +1548,51 @@ class MainViewModel : ViewModel() {
         }
         Timber.d("Audio recording state reset.")
     }
+
+    fun shareLogs(context: Context) {
+        viewModelScope.launch {
+            try {
+                val logFile = FileLoggingTree.getLogFile(context)
+                if (logFile.exists()) {
+                    val authority = "${context.packageName}.provider"
+                    val logUri = FileProvider.getUriForFile(context, authority, logFile)
+
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain" // или "application/octet-stream"
+                        putExtra(Intent.EXTRA_STREAM, logUri)
+                        putExtra(Intent.EXTRA_SUBJECT, "Логи приложения Bitrix App")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    // Создаем chooser, чтобы пользователь мог выбрать, как отправить файл
+                    val chooserIntent = Intent.createChooser(shareIntent, "Поделиться логами через...")
+                    chooserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // Необходимо, если вызываем из ViewModel/не Activity контекста
+
+                    // Так как мы в ViewModel, нам нужен способ запустить Intent.
+                    // Обычно это делается через Activity. Можно передать callback или использовать LiveData/Flow для сигнала Activity.
+                    // Для простоты, пока просто логируем, что нужно запустить Intent.
+                    // В реальном приложении, это нужно будет обработать в Activity.
+                    // Однако, если context - это Activity, то можно сделать так:
+                    if (context is ComponentActivity) { // Проверяем, является ли контекст Activity
+                         context.startActivity(chooserIntent)
+                         audioProcessingMessage = "Подготовка к отправке логов..." // Используем существующее поле для сообщения
+                         delay(2000)
+                         audioProcessingMessage = null
+                    } else {
+                         Timber.e("Cannot start share intent from non-Activity context. Context type: ${context.javaClass.name}")
+                         errorMessage = "Не удалось инициировать отправку логов: неверный контекст."
+                    }
+
+                    Timber.i("Share logs intent created for URI: $logUri")
+                } else {
+                    Timber.w("Log file not found for sharing.")
+                    errorMessage = "Файл логов не найден."
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Error sharing log file")
+                errorMessage = "Ошибка при отправке логов: ${e.message}"
+            }
+        }
+    }
 }
 
 // UI компоненты
@@ -1664,6 +1710,15 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             },
                             onClick = {
                                 viewModel.toggleComments()
+                                isSettingsExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Поделиться логами") },
+                            onClick = {
+                                // Получаем LocalContext внутри Composable
+                                val currentContext = LocalContext.current
+                                viewModel.shareLogs(currentContext)
                                 isSettingsExpanded = false
                             }
                         )
