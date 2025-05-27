@@ -1919,7 +1919,7 @@ fun TaskCard(
                             .padding(horizontal = 8.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.Mic,
+                            imageVector = androidx.compose.material.icons.Icons.Filled.Mic,
                             contentDescription = "Записать аудиокомментарий",
                             tint = MaterialTheme.colorScheme.onSecondaryContainer,
                             modifier = Modifier.size(28.dp)
