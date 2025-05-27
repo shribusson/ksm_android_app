@@ -59,6 +59,9 @@ dependencies {
     // Logging - Timber
     implementation("com.jakewharton.timber:timber:5.0.1")
 
+    // Material Icons Extended for more icons like Mic
+    implementation("androidx.compose.material:material-icons-extended:1.6.7") // Используем актуальную стабильную версию
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
