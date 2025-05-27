@@ -125,7 +125,7 @@ data class UserTimerData(
 
 // Enum для выбора темы
 enum class AppThemeOptions {
-    SYSTEM, LIGHT, DARK, OCEAN, FOREST
+    SYSTEM, LIGHT, DARK
 }
 
 // ViewModel
@@ -1815,7 +1815,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(20.dp) // Увеличиваем основной отступ
+            .padding(16.dp) // Немного уменьшим основной отступ для баланса с тенями
     ) {
         // Верхняя панель: пользователь, время, статус работы, настройки
         Row(
@@ -1917,8 +1917,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                                             AppThemeOptions.SYSTEM -> "Как в системе"
                                             AppThemeOptions.LIGHT -> "Светлая"
                                             AppThemeOptions.DARK -> "Темная"
-                                            AppThemeOptions.OCEAN -> "Океан"
-                                            AppThemeOptions.FOREST -> "Лес"
+                                            // OCEAN и FOREST удалены
                                         })
                                     }
                                 },
@@ -1955,13 +1954,14 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
             task?.let {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp), // Добавляем тень
+                    colors = CardDefaults.elevatedCardColors( // Используем elevatedCardColors
                         containerColor = if (currentUserTimerData.isPausedForUserAction) StatusYellow
                                          else StatusBlue
                     )
                 ) {
                     Column(
-                        modifier = Modifier.padding(20.dp) // Увеличиваем отступ
+                        modifier = Modifier.padding(16.dp) // Стандартный отступ
                     ) {
                         Text(
                             text = if (currentUserTimerData.isPausedForUserAction) "⏸️ Таймер приостановлен (пользователем)" else "🕐 Активный таймер",
@@ -1996,10 +1996,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
             task?.let {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = StatusOrange)
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp), // Добавляем тень
+                    colors = CardDefaults.elevatedCardColors(containerColor = StatusOrange) // Используем elevatedCardColors
                 ) {
                     Column(
-                        modifier = Modifier.padding(20.dp) // Увеличиваем отступ
+                        modifier = Modifier.padding(16.dp) // Стандартный отступ
                     ) {
                         Text(
                             text = "⏸️ Таймер на системной паузе (${
@@ -2046,15 +2047,16 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
         viewModel.errorMessage?.let { error ->
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp), // Добавляем тень
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.errorContainer) // Используем elevatedCardColors
             ) {
                 Text(
                     text = error,
-                    modifier = Modifier.padding(20.dp), // Увеличиваем отступ
+                    modifier = Modifier.padding(16.dp), // Стандартный отступ
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
             }
-            Spacer(modifier = Modifier.height(20.dp)) // Увеличиваем отступ
+            Spacer(modifier = Modifier.height(16.dp)) // Стандартный отступ
         }
 
         // Список задач
@@ -2064,7 +2066,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp), // Небольшая тень для сообщения
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer) // Используем elevatedCardColors
             ) {
                 Text(
                     text = message,
@@ -2092,7 +2095,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                     isTimerSystemPausedForThisTask = isTaskSystemPaused,
                     viewModel = viewModel // Передаем ViewModel в TaskCard
                 )
-                Spacer(modifier = Modifier.height(12.dp)) // Увеличиваем отступ между карточками
+                Spacer(modifier = Modifier.height(10.dp)) // Немного уменьшим отступ, т.к. карточки теперь с тенью
             }
         }
     }
@@ -2103,6 +2106,7 @@ fun UserAvatar(user: User, size: Int) {
     Box(
         modifier = Modifier
             .size(size.dp)
+            .shadow(elevation = 4.dp, shape = CircleShape) // Добавляем тень
             .clip(CircleShape)
             .background(AvatarBackground), // Используем цвет из Color.kt
         contentAlignment = Alignment.Center
@@ -2132,7 +2136,8 @@ fun WorkStatusIcon(workStatus: WorkStatus) {
         fontSize = 30.sp, // Увеличиваем иконку
         color = contentColor,
         modifier = Modifier
-            .background(color.copy(alpha = 0.2f), CircleShape) // Немного увеличиваем alpha для видимости фона
+            .shadow(elevation = 2.dp, shape = CircleShape) // Добавляем небольшую тень
+            .background(color.copy(alpha = 0.2f), CircleShape)
             .padding(10.dp) // Увеличиваем отступ
     )
 }
@@ -2166,7 +2171,8 @@ fun TaskCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { isExpanded = !isExpanded },
-        colors = CardDefaults.cardColors(
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp), // Увеличиваем тень для TaskCard
+        colors = CardDefaults.elevatedCardColors( // Используем elevatedCardColors
             containerColor = when {
                 task.isCompleted -> StatusGreen
                 isTimerRunningForThisTask -> StatusBlue
@@ -2178,7 +2184,7 @@ fun TaskCard(
         )
     ) {
         Column(
-            modifier = Modifier.padding(20.dp) // Увеличиваем отступ
+            modifier = Modifier.padding(16.dp) // Стандартный отступ
         ) {
             // Заголовок и статус
             Row(
@@ -2305,10 +2311,11 @@ fun TaskCard(
                 // Подробная информация о времени
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp), // Небольшая тень для вложенной карточки
+                    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface) // Используем elevatedCardColors
                 ) {
                     Column(
-                        modifier = Modifier.padding(16.dp) // Увеличиваем отступ
+                        modifier = Modifier.padding(12.dp) // Уменьшим отступ для вложенной карточки
                     ) {
                         Text(
                             text = "⏱️ Временные показатели",
@@ -2432,11 +2439,11 @@ fun TaskCard(
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 6.dp), // Увеличиваем отступ
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                .padding(vertical = 4.dp), // Уменьшим вертикальный отступ
+                            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)), // Используем elevatedCardColors
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp) // Минимальная тень для подзадач
                         ) {
-                            Column(modifier = Modifier.padding(16.dp)) { // Увеличиваем отступ
+                            Column(modifier = Modifier.padding(12.dp)) { // Уменьшим отступ для подзадачи
                                 Text(
                                     text = subtask.title,
                                     fontSize = 16.sp, // Увеличиваем шрифт
@@ -2484,7 +2491,8 @@ fun TaskCard(
                     onClick = { onTimerToggle(task) },
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp), // Увеличиваем высоту кнопки
                     enabled = !isTimerSystemPausedForThisTask,
-                    colors = ButtonDefaults.buttonColors(
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp), // Добавляем тень кнопке
+                    colors = ButtonDefaults.elevatedButtonColors( // Используем elevatedButtonColors
                         containerColor = when {
                             isTimerRunningForThisTask -> MaterialTheme.colorScheme.error // Используем цвет ошибки для "Стоп"
                             isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.tertiary // Зеленый для "Продолжить"
@@ -2517,7 +2525,8 @@ fun TaskCard(
                     Button(
                         onClick = { onCompleteTask(task) },
                         modifier = Modifier.weight(1f).heightIn(min = 52.dp), // Увеличиваем высоту кнопки
-                        colors = ButtonDefaults.buttonColors(
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp), // Добавляем тень кнопке
+                        colors = ButtonDefaults.elevatedButtonColors( // Используем elevatedButtonColors
                             containerColor = ProgressBarGreen, // Используем наш зеленый для завершения
                             contentColor = MaterialTheme.colorScheme.onPrimary // или другой контрастный
                         )
@@ -2557,6 +2566,7 @@ fun TaskCard(
                         },
                         modifier = Modifier
                             .heightIn(min = 52.dp)
+                            .shadow(elevation = 2.dp, shape = CircleShape) // Тень для IconButton
                             .background(
                                 if (isCurrentlyRecordingThisTask) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
                                 CircleShape

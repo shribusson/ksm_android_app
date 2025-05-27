@@ -42,37 +42,7 @@ private val LightColorScheme = lightColorScheme(
     onError = LightOnError
 )
 
-// Цветовая схема "Океан" (Светлая)
-private val OceanColorScheme = lightColorScheme(
-    primary = OceanPrimary,
-    secondary = OceanSecondary,
-    tertiary = OceanTertiary,
-    background = OceanBackground,
-    surface = OceanSurface,
-    error = OceanError,
-    onPrimary = OceanOnPrimary,
-    onSecondary = OceanOnSecondary,
-    onTertiary = OceanOnTertiary,
-    onBackground = OceanOnBackground,
-    onSurface = OceanOnSurface,
-    onError = OceanOnError
-)
-
-// Цветовая схема "Лес" (Светлая)
-private val ForestColorScheme = lightColorScheme(
-    primary = ForestPrimary,
-    secondary = ForestSecondary,
-    tertiary = ForestTertiary,
-    background = ForestBackground,
-    surface = ForestSurface,
-    error = ForestError,
-    onPrimary = ForestOnPrimary,
-    onSecondary = ForestOnSecondary,
-    onTertiary = ForestOnTertiary,
-    onBackground = ForestOnBackground,
-    onSurface = ForestOnSurface,
-    onError = ForestOnError
-)
+// OceanColorScheme и ForestColorScheme удалены
 
 @Composable
 fun Bitrix_appTheme(
@@ -94,10 +64,14 @@ fun Bitrix_appTheme(
         }
         AppThemeOptions.LIGHT -> LightColorScheme
         AppThemeOptions.DARK -> DarkColorScheme
-        AppThemeOptions.OCEAN -> OceanColorScheme // Наша новая тема "Океан"
-        AppThemeOptions.FOREST -> ForestColorScheme // Наша новая тема "Лес"
-        // Добавляем else для исчерпывающего when
-        else -> { // По умолчанию используем системную логику
+        // Случаи для OCEAN и FOREST удалены
+        // Добавляем else для исчерпывающего when (или он уже есть и покрывает SYSTEM)
+        // В данном случае, SYSTEM уже обрабатывается, и т.к. enum стал меньше,
+        // else может быть не нужен, если when покрывает все варианты AppThemeOptions.
+        // Однако, для безопасности, если AppThemeOptions.SYSTEM не последний,
+        // или если есть вероятность добавления новых тем, else полезен.
+        // Текущая структура с else для SYSTEM уже корректна.
+        else -> { // По умолчанию используем системную логику (этот else покрывает SYSTEM, если он не указан явно выше)
             if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val context = LocalContext.current
                 if (darkThemeSystem) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)

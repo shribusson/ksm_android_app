@@ -43,30 +43,4 @@ val ProgressBarGreen = Color(0xFF4CAF50) // Насыщенный зеленый
 val ProgressBarOrange = Color(0xFFFF9800) // Насыщенный оранжевый
 val ProgressBarRed = Color(0xFFF44336)   // Насыщенный красный
 
-// Ocean Theme Colors (Light) - More Vibrant
-val OceanPrimary = Color(0xFF0083C9) // Чуть ярче синий
-val OceanSecondary = Color(0xFF4FC3F7) // Яркий светло-голубой
-val OceanTertiary = Color(0xFFFFD740) // Яркий песочно-золотой
-val OceanBackground = Color(0xFFE0F7FA) // Оставляем очень светлый фон
-val OceanSurface = Color(0xFFFFFFFF)
-val OceanError = Color(0xFFE53935) // Более насыщенный красный
-val OceanOnPrimary = Color(0xFFFFFFFF)
-val OceanOnSecondary = Color(0xFF000000)
-val OceanOnTertiary = Color(0xFF000000)
-val OceanOnBackground = Color(0xFF000000)
-val OceanOnSurface = Color(0xFF000000)
-val OceanOnError = Color(0xFFFFFFFF)
-
-// Forest Theme Colors (Light) - More Vibrant
-val ForestPrimary = Color(0xFF43A047) // Более насыщенный зеленый
-val ForestSecondary = Color(0xFF8BC34A) // Яркий светло-зеленый/лайм
-val ForestTertiary = Color(0xFF8D6E63) // Более насыщенный коричневый
-val ForestBackground = Color(0xFFF1F8E9) // Слегка зеленоватый светлый фон
-val ForestSurface = Color(0xFFFFFFFF)
-val ForestError = Color(0xFFE53935) // Более насыщенный красный
-val ForestOnPrimary = Color(0xFFFFFFFF)
-val ForestOnSecondary = Color(0xFF000000)
-val ForestOnTertiary = Color(0xFFFFFFFF)
-val ForestOnBackground = Color(0xFF000000)
-val ForestOnSurface = Color(0xFF000000)
-val ForestOnError = Color(0xFFFFFFFF)
+// Цвета для Ocean и Forest удалены
