@@ -1247,13 +1247,13 @@ class MainViewModel : ViewModel() {
 
     private fun startAudioRecording(task: Task, context: Context) {
         currentRecordingTask = task
-        val fileName = "audio_comment_${task.id}_${System.currentTimeMillis()}.webm" // Изменено расширение файла
+        val fileName = "audio_comment_${task.id}_${System.currentTimeMillis()}.3gp" // Используем 3GP формат
         audioOutputFile = java.io.File(context.cacheDir, fileName)
 
         mediaRecorder = MediaRecorder(context).apply { // Для API 31+ нужен контекст
             setAudioSource(MediaRecorder.AudioSource.MIC)
-            setOutputFormat(MediaRecorder.OutputFormat.WEBM) // Изменен формат вывода
-            setAudioEncoder(MediaRecorder.AudioEncoder.VORBIS) // Изменен аудиокодер
+            setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP) // Используем 3GP формат
+            setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB)   // Используем AMR_NB кодек
             setOutputFile(audioOutputFile?.absolutePath)
             try {
                 prepare()
