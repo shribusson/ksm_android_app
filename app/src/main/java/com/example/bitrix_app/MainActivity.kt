@@ -2529,23 +2529,25 @@ fun TaskCard(
                     onClick = { onTimerToggle(task) },
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp), // Увеличиваем высоту кнопки
                     enabled = !isTimerSystemPausedForThisTask,
-                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp), // Добавляем тень кнопке
-                    colors = ButtonDefaults.elevatedButtonColors( // Используем elevatedButtonColors
-                        containerColor = when {
-                            isTimerRunningForThisTask -> MaterialTheme.colorScheme.error // Используем цвет ошибки для "Стоп"
-                            isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.tertiary // Зеленый для "Продолжить"
-                            isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f) // Цвет для disabled
-                            else -> MaterialTheme.colorScheme.primary // Основной цвет для "Старт"
-                        },
-                        contentColor = when {
-                            isTimerRunningForThisTask -> MaterialTheme.colorScheme.onError
-                            isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.onTertiary
-                            isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) // Заменяем на фактическое значение
-                            else -> MaterialTheme.colorScheme.onPrimary
-                        },
-                        disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
-                        disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) // Заменяем на фактическое значение
-                    )
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
+                    colors = remember(isTimerRunningForThisTask, isTimerUserPausedForThisTask, isTimerSystemPausedForThisTask, MaterialTheme.colorScheme) {
+                        ButtonDefaults.elevatedButtonColors( // Используем elevatedButtonColors
+                            containerColor = when {
+                                isTimerRunningForThisTask -> MaterialTheme.colorScheme.error // Используем цвет ошибки для "Стоп"
+                                isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.tertiary // Зеленый для "Продолжить"
+                                isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f) // Цвет для disabled
+                                else -> MaterialTheme.colorScheme.primary // Основной цвет для "Старт"
+                            },
+                            contentColor = when {
+                                isTimerRunningForThisTask -> MaterialTheme.colorScheme.onError
+                                isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.onTertiary
+                                isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) // Заменяем на фактическое значение
+                                else -> MaterialTheme.colorScheme.onPrimary
+                            },
+                            disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) // Заменяем на фактическое значение
+                        )
+                    }
                 ) {
                     Text(
                         text = when {
