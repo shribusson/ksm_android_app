@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
@@ -32,6 +33,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.bitrix_app.ui.theme.* // Импортируем все из пакета темы
+import timber.log.Timber
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.*
@@ -107,6 +109,7 @@ class MainViewModel : ViewModel() {
         User("Денис Мелков", "https://bitrix.tooksm.kz/rest/320/gwx0v32nqbiwu7ww/", "320", "ДМ"),
         User("Владислав Малай", "https://bitrix.tooksm.kz/rest/321/smczp19q348xui28/", "321", "ВМ"),
         User("Ким Филби", "https://bitrix.tooksm.kz/rest/253/tk5y2f3sukqxn5bi/", "253", "КФ")
+        // User("Тестовый Пользователь", "https://your_bitrix_domain/rest/user_id/webhook_code/", "user_id", "ТП")
     )
 
     var currentUserIndex by mutableStateOf(0)
@@ -146,7 +149,8 @@ class MainViewModel : ViewModel() {
     var currentTime by mutableStateOf("")
 
     init {
-        updateWorkStatus()
+        Timber.d("MainViewModel initialized.")
+        updateWorkStatus() // Важно вызвать до loadTasks, чтобы timeman статус был актуален
         loadTasks()
         startPeriodicUpdates()
         startPeriodicTaskUpdates()
@@ -155,15 +159,18 @@ class MainViewModel : ViewModel() {
     }
 
     fun switchUser(index: Int) {
+        Timber.i("Switching user to index $index: ${users.getOrNull(index)?.name ?: "Unknown"}")
         // При смене пользователя, предыдущий таймер (если был) продолжает свое состояние
         // в userTimerDataMap. Новый пользователь подхватит свое состояние.
         currentUserIndex = index
+        updateWorkStatus() // Обновляем статус рабочего дня для нового пользователя
         loadTasks() // Загружаем задачи для нового пользователя
         // Обновление tasks здесь больше не нужно, так как isTimerRunning удалено из Task,
         // а состояние для UI вычисляется на лету из getCurrentUserTimerData().
     }
 
     fun loadTasks() {
+        Timber.d("loadTasks called for user: ${users[currentUserIndex].name}")
         isLoading = true
         errorMessage = null
         val user = users[currentUserIndex]
@@ -180,7 +187,7 @@ class MainViewModel : ViewModel() {
                 "&select[]=STATUS" +
                 "&select[]=RESPONSIBLE_ID"
 
-        println("Loading tasks with URL: $url")
+        Timber.d("Loading tasks with URL: $url")
 
         val request = Request.Builder().url(url).build()
 
@@ -189,7 +196,7 @@ class MainViewModel : ViewModel() {
                 viewModelScope.launch {
                     isLoading = false
                     errorMessage = "Ошибка подключения: ${e.message}"
-                    println("Network error: ${e.message}")
+                    Timber.e(e, "Network error while loading tasks")
                 }
             }
 
@@ -200,7 +207,7 @@ class MainViewModel : ViewModel() {
                         response.body?.let { body ->
                             try {
                                 val responseText = body.string()
-                                println("API Response: $responseText")
+                                Timber.d("Load tasks API Response: $responseText")
 
                                 val json = JSONObject(responseText)
 
@@ -208,6 +215,7 @@ class MainViewModel : ViewModel() {
                                 if (json.has("error")) {
                                     val error = json.getJSONObject("error")
                                     errorMessage = "Ошибка API: ${error.optString("error_description", "Неизвестная ошибка")}"
+                                    Timber.w("API error in loadTasks: $errorMessage")
                                     return@launch
                                 }
 
@@ -241,12 +249,13 @@ class MainViewModel : ViewModel() {
                                         .thenBy { it.isCompleted }
                                         .thenBy { it.id.toIntOrNull() ?: 0 }
                                 )
-                                println("Loaded ${tasksList.size} tasks")
+                                Timber.i("Loaded ${tasksList.size} tasks for user ${user.name}")
 
                                 // Проверяем, существует ли еще активная задача после загрузки
                                 val activeTaskExists = tasks.any { it.id == currentUserDataBeforeLoad.activeTimerId }
                                 if (currentUserDataBeforeLoad.activeTimerId != null && !activeTaskExists) {
                                     // Активная задача больше не существует, сбрасываем таймер для этого пользователя
+                                    Timber.i("Active task ${currentUserDataBeforeLoad.activeTimerId} no longer exists. Resetting timer for user ${user.name}.")
                                     updateCurrentUserTimerData(UserTimerData())
                                 } else {
                                     // Восстанавливаем isTimerRunning для UI на основе сохраненных данных
@@ -254,23 +263,24 @@ class MainViewModel : ViewModel() {
                                     // tasks = tasks.map { task ->
                                     //    task.copy(isTimerRunning = task.id == currentUserDataBeforeLoad.activeTimerId && !currentUserDataBeforeLoad.isPausedForUserAction && !currentUserDataBeforeLoad.isSystemPaused)
                                     // }
+                                    Timber.d("Active task ${currentUserDataBeforeLoad.activeTimerId} still exists or no active timer was set. Timer state preserved.")
                                 }
 
 
                                 if (tasksList.isEmpty()) {
+                                    Timber.w("No tasks found for user ${user.name} with primary query. Trying simple query.")
                                     // Попробуем альтернативный запрос без фильтров
                                     loadTasksSimple()
                                 }
 
                             } catch (e: Exception) {
                                 errorMessage = "Ошибка парсинга: ${e.message}"
-                                println("Parse error: ${e.message}")
-                                e.printStackTrace()
+                                Timber.e(e, "Parse error in loadTasks")
                             }
                         }
                     } else {
                         errorMessage = "Ошибка сервера: ${response.code} - ${response.message}"
-                        println("HTTP error: ${response.code} - ${response.message}")
+                        Timber.e("HTTP error in loadTasks: ${response.code} - ${response.message}")
                     }
                 }
             }
@@ -282,13 +292,14 @@ class MainViewModel : ViewModel() {
         val user = users[currentUserIndex]
         val url = "${user.webhookUrl}tasks.task.list"
 
-        println("Trying simple URL without filters: $url")
+        Timber.d("Trying simple URL without filters for user ${user.name}: $url")
 
         val request = Request.Builder().url(url).build()
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 viewModelScope.launch {
+                    Timber.e(e, "Simple task load failed for user ${user.name}. Trying alternative.")
                     // Теперь пробуем альтернативный запрос
                     loadTasksAlternative()
                 }
@@ -300,7 +311,7 @@ class MainViewModel : ViewModel() {
                         response.body?.let { body ->
                             try {
                                 val responseText = body.string()
-                                println("Simple API Response: $responseText")
+                                Timber.d("Simple API Response for user ${user.name}: $responseText")
 
                                 val json = JSONObject(responseText)
                                 if (json.has("result")) {
@@ -319,23 +330,29 @@ class MainViewModel : ViewModel() {
                                                     .thenBy { it.id.toIntOrNull() ?: 0 }
                                             )
                                             errorMessage = null
-                                            println("Successfully loaded ${tasksList.size} tasks from simple method")
+                                            Timber.i("Successfully loaded ${tasksList.size} tasks from simple method for user ${user.name}")
                                         } else {
+                                            Timber.w("Simple method yielded no tasks for user ${user.name}. Trying alternative.")
                                             // Если все еще пусто, пробуем альтернативный
                                             loadTasksAlternative()
                                         }
                                     } else {
+                                        Timber.w("Simple method response for user ${user.name} has 'result' but not 'result.tasks' or is not a JSONObject. Trying alternative.")
                                         // Пробуем альтернативный метод
                                         loadTasksAlternative()
                                     }
+                                } else {
+                                     Timber.w("Simple method response for user ${user.name} does not have 'result'. Trying alternative.")
+                                     loadTasksAlternative()
                                 }
                             } catch (e: Exception) {
-                                println("Simple parse error: ${e.message}")
+                                Timber.e(e, "Simple parse error for user ${user.name}. Trying alternative.")
                                 // Пробуем альтернативный метод
                                 loadTasksAlternative()
                             }
                         }
                     } else {
+                        Timber.w("Simple method HTTP error for user ${user.name}: ${response.code}. Trying alternative.")
                         // Пробуем альтернативный метод
                         loadTasksAlternative()
                     }
@@ -349,9 +366,10 @@ class MainViewModel : ViewModel() {
         val user = users[currentUserIndex]
         val url = "${user.webhookUrl}tasks.task.list" +
                 "?order[ID]=desc" +
-                "&filter[CREATED_BY]=${user.userId}"
+                "&filter[CREATED_BY]=${user.userId}" // Фильтр по CREATED_BY может быть не тем, что нужно, если задачи назначаются другими.
+                                                    // Возможно, лучше оставить без фильтра или использовать RESPONSIBLE_ID, если предыдущие не сработали.
 
-        println("Trying alternative URL: $url")
+        Timber.d("Trying alternative URL for user ${user.name}: $url")
 
         val request = Request.Builder().url(url).build()
 
@@ -359,6 +377,7 @@ class MainViewModel : ViewModel() {
             override fun onFailure(call: Call, e: IOException) {
                 viewModelScope.launch {
                     errorMessage = "Альтернативный запрос тоже не удался: ${e.message}"
+                    Timber.e(e, "Alternative task load failed for user ${user.name}")
                 }
             }
 
@@ -368,7 +387,7 @@ class MainViewModel : ViewModel() {
                         response.body?.let { body ->
                             try {
                                 val responseText = body.string()
-                                println("Alternative API Response: $responseText")
+                                Timber.d("Alternative API Response for user ${user.name}: $responseText")
 
                                 val json = JSONObject(responseText)
                                 if (json.has("result")) {
@@ -387,15 +406,22 @@ class MainViewModel : ViewModel() {
                                                     .thenBy { it.id.toIntOrNull() ?: 0 }
                                             )
                                             errorMessage = null
-                                            println("Successfully loaded ${tasksList.size} tasks from alternative method")
+                                            Timber.i("Successfully loaded ${tasksList.size} tasks from alternative method for user ${user.name}")
+                                        } else {
+                                            Timber.w("Alternative method also yielded no tasks for user ${user.name}.")
                                         }
+                                    } else {
+                                         Timber.w("Alternative method response for user ${user.name} has 'result' but not 'result.tasks' or is not a JSONObject.")
                                     }
+                                } else {
+                                    Timber.w("Alternative method response for user ${user.name} does not have 'result'.")
                                 }
                             } catch (e: Exception) {
-                                println("Alternative parse error: ${e.message}")
-                                e.printStackTrace()
+                                Timber.e(e, "Alternative parse error for user ${user.name}")
                             }
                         }
+                    } else {
+                         Timber.w("Alternative method HTTP error for user ${user.name}: ${response.code}.")
                     }
                 }
             }
@@ -403,6 +429,7 @@ class MainViewModel : ViewModel() {
     }
 
     private fun processTasks(tasksData: Any, tasksList: MutableList<Task>) {
+        Timber.d("Processing tasks from data type: ${tasksData.javaClass.simpleName}")
         when (tasksData) {
             is JSONObject -> {
                 val tasksIterator = tasksData.keys()
@@ -419,10 +446,11 @@ class MainViewModel : ViewModel() {
                 }
             }
         }
-        println("Processed ${tasksList.size} tasks from data type: ${tasksData.javaClass.simpleName}")
+        Timber.d("Processed ${tasksList.size} tasks.")
     }
 
     private fun createTaskFromJson(taskJson: JSONObject, fallbackId: String = ""): Task {
+        // Timber.v("Creating task from JSON: ${taskJson.toString().take(100)}...") // Может быть слишком многословно
         val timeSpent = taskJson.optInt("timeSpentInLogs",
             taskJson.optInt("TIME_SPENT_IN_LOGS", 0))
 
@@ -446,8 +474,7 @@ class MainViewModel : ViewModel() {
             override fun onFailure(call: Call, e: IOException) {
                 viewModelScope.launch {
                     loadingChecklistMap = loadingChecklistMap - taskId
-                    // Можно добавить обработку ошибки, например, в errorMessage
-                    println("Failed to fetch checklist for task $taskId: ${e.message}")
+                    Timber.e(e, "Failed to fetch checklist for task $taskId")
                 }
             }
 
@@ -458,7 +485,7 @@ class MainViewModel : ViewModel() {
                         response.body?.let { body ->
                             try {
                                 val responseText = body.string()
-                                println("Checklist response for task $taskId: $responseText")
+                                Timber.d("Checklist response for task $taskId: $responseText")
                                 val json = JSONObject(responseText)
                                 if (json.has("result")) {
                                     val itemsArray = json.getJSONArray("result")
@@ -474,13 +501,13 @@ class MainViewModel : ViewModel() {
                                         )
                                     }
                                     checklistsMap = checklistsMap + (taskId to itemsList)
-                                    println("Fetched checklist items for task $taskId:")
-                                    itemsList.forEach { item ->
-                                        println("  - ID: ${item.id}, Title: ${item.title}, IsComplete: ${item.isComplete}")
-                                    }
+                                    Timber.i("Fetched ${itemsList.size} checklist items for task $taskId.")
+                                    // itemsList.forEach { item ->
+                                    // Timber.v("  - ID: ${item.id}, Title: ${item.title}, IsComplete: ${item.isComplete}")
+                                    // }
                                 }
                             } catch (e: Exception) {
-                                println("Error parsing checklist for task $taskId: ${e.message}")
+                                Timber.e(e, "Error parsing checklist for task $taskId")
                             }
                         }
                     }
@@ -492,6 +519,7 @@ class MainViewModel : ViewModel() {
     fun fetchSubtasksForTask(taskId: String) {
         val user = users[currentUserIndex]
         loadingSubtasksMap = loadingSubtasksMap + (taskId to true)
+        Timber.d("Fetching subtasks for task $taskId for user ${user.name}")
         // Запрашиваем основные поля для подзадач
         val url = "${user.webhookUrl}tasks.task.list" +
                 "?filter[PARENT_ID]=$taskId" +
@@ -508,7 +536,7 @@ class MainViewModel : ViewModel() {
             override fun onFailure(call: Call, e: IOException) {
                 viewModelScope.launch {
                     loadingSubtasksMap = loadingSubtasksMap - taskId
-                    println("Failed to fetch subtasks for task $taskId: ${e.message}")
+                    Timber.e(e, "Failed to fetch subtasks for task $taskId")
                 }
             }
 
@@ -519,7 +547,7 @@ class MainViewModel : ViewModel() {
                         response.body?.let { body ->
                             try {
                                 val responseText = body.string()
-                                println("Subtasks response for task $taskId: $responseText")
+                                Timber.d("Subtasks response for task $taskId: $responseText")
                                 val json = JSONObject(responseText)
                                 val subtasksList = mutableListOf<Task>()
                                 if (json.has("result")) {
@@ -533,8 +561,9 @@ class MainViewModel : ViewModel() {
                                     processTasks(tasksDataToProcess, subtasksList)
                                 }
                                 subtasksMap = subtasksMap + (taskId to subtasksList)
+                                Timber.i("Fetched ${subtasksList.size} subtasks for task $taskId.")
                             } catch (e: Exception) {
-                                println("Error parsing subtasks for task $taskId: ${e.message}")
+                                Timber.e(e, "Error parsing subtasks for task $taskId")
                             }
                         }
                     }
@@ -545,11 +574,10 @@ class MainViewModel : ViewModel() {
 
     fun toggleChecklistItemStatus(taskId: String, checklistItemId: String, currentIsComplete: Boolean) {
         val user = users[currentUserIndex]
-        // Исправляем имя метода: добавляем .task. между tasks. и checklistitem.
         val action = if (currentIsComplete) "task.checklistitem.renew" else "task.checklistitem.complete"
         val url = "${user.webhookUrl}$action"
 
-        println("Toggling checklist item: URL=$url, TASKID=$taskId, ITEMID=$checklistItemId, Action=${if (currentIsComplete) "renew" else "complete"}")
+        Timber.i("Toggling checklist item: URL=$url, TASKID=$taskId, ITEMID=$checklistItemId, Action=${if (currentIsComplete) "renew" else "complete"} for user ${user.name}")
 
         val formBody = FormBody.Builder()
             .add("TASKID", taskId)
@@ -571,7 +599,7 @@ class MainViewModel : ViewModel() {
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 viewModelScope.launch {
-                    println("Failed to toggle checklist item $checklistItemId for task $taskId: ${e.message}")
+                    Timber.e(e, "Failed to toggle checklist item $checklistItemId for task $taskId")
                     // Откатываем изменение в случае ошибки
                     checklistsMap = checklistsMap + (taskId to oldChecklist)
                     // Можно добавить сообщение об ошибке для пользователя
@@ -580,17 +608,18 @@ class MainViewModel : ViewModel() {
 
             override fun onResponse(call: Call, response: Response) {
                 viewModelScope.launch {
+                    val responseBody = response.body?.string()
                     if (!response.isSuccessful) {
-                        println("Error toggling checklist item $checklistItemId for task $taskId: ${response.code}")
+                        Timber.w("Error toggling checklist item $checklistItemId for task $taskId: ${response.code}. Response: $responseBody")
                         // Откатываем изменение в случае ошибки от сервера
                         checklistsMap = checklistsMap + (taskId to oldChecklist)
                     } else {
                         // Если успешно, данные уже оптимистично обновлены.
                         // Можно дополнительно перезапросить чек-лист для полной синхронизации, если необходимо.
                         // fetchChecklistForTask(taskId) // Раскомментировать, если нужна полная синхронизация
-                        println("Successfully toggled checklist item $checklistItemId for task $taskId. New state: ${!currentIsComplete}")
+                        Timber.i("Successfully toggled checklist item $checklistItemId for task $taskId. New state: ${!currentIsComplete}. Response: $responseBody")
                     }
-                    response.body?.close()
+                    response.close()
                 }
             }
         })
@@ -599,22 +628,35 @@ class MainViewModel : ViewModel() {
 
     fun toggleTimer(task: Task) {
         val currentUserData = getCurrentUserTimerData()
+        val user = users[currentUserIndex]
+        Timber.i("toggleTimer called for task '${task.title}' (ID: ${task.id}) for user ${user.name}")
 
-        if (currentUserData.activeTimerId == task.id && !currentUserData.isSystemPaused) {
-            // Таймер активен для этой задачи и не на системной паузе -> останавливаем
+        if (currentUserData.activeTimerId == task.id && !currentUserData.isSystemPaused && !currentUserData.isPausedForUserAction) {
+            // Таймер активен для этой задачи и не на системной паузе/пользовательской паузе -> останавливаем
+            Timber.d("Stopping active timer for task ${task.id}")
             stopTimerAndSaveTime(task, currentUserData.timerSeconds)
             if (sendComments) {
                 sendTimerComment(task, "Таймер остановлен", currentUserData.timerSeconds)
             }
-            updateCurrentUserTimerData(UserTimerData()) // Сбрасываем таймер для пользователя
+            updateCurrentUserTimerData(
+                currentUserData.copy(
+                    isPausedForUserAction = true, // Ставим на пользовательскую паузу
+                    pausedTaskIdForUserAction = task.id,
+                    pausedTimerSecondsForUserAction = currentUserData.timerSeconds
+                    // activeTimerId и timerSeconds остаются, чтобы показать "приостановленный" таймер
+                )
+            )
         } else {
-            // Останавливаем любой другой активный таймер (если он был)
-            if (currentUserData.activeTimerId != null && currentUserData.activeTimerId != task.id) {
+            // Либо таймер для другой задачи, либо этот на паузе (системной/пользовательской), либо нет активного таймера
+            Timber.d("Starting or resuming timer for task ${task.id}")
+            // Останавливаем любой другой активный таймер (если он был и не на паузе)
+            if (currentUserData.activeTimerId != null && currentUserData.activeTimerId != task.id && !currentUserData.isPausedForUserAction && !currentUserData.isSystemPaused) {
                 val previousTask = tasks.find { it.id == currentUserData.activeTimerId }
                 previousTask?.let {
+                    Timber.d("Stopping timer for previous task ${it.id} due to switching to task ${task.id}")
                     stopTimerAndSaveTime(it, currentUserData.timerSeconds)
                     if (sendComments) {
-                        sendTimerComment(it, "Таймер остановлен (переключение)", currentUserData.timerSeconds)
+                        sendTimerComment(it, "Таймер остановлен (переключение на задачу ${task.id})", currentUserData.timerSeconds)
                     }
                 }
             }
@@ -624,15 +666,25 @@ class MainViewModel : ViewModel() {
 
             if (currentUserData.pausedTaskIdForUserAction == task.id) {
                 // Возобновляем таймер, который был приостановлен пользователем для этой задачи
+                Timber.d("Resuming user-paused timer for task ${task.id} from ${currentUserData.pausedTimerSecondsForUserAction}s")
                 newTimerSeconds = currentUserData.pausedTimerSecondsForUserAction
                 commentAction = "Таймер возобновлен"
+            } else if (currentUserData.activeTimerId == task.id && currentUserData.isPausedForUserAction) {
+                 // Это условие дублирует предыдущее, если pausedTaskIdForUserAction == task.id.
+                 // Если activeTimerId == task.id, но pausedTaskIdForUserAction другой или null, это новая логика.
+                 // По факту, если isPausedForUserAction, то pausedTaskIdForUserAction должен быть равен activeTimerId.
+                 // Оставляем для ясности, что мы возобновляем именно пользовательскую паузу.
+                Timber.d("Resuming (from isPausedForUserAction) timer for task ${task.id} from ${currentUserData.timerSeconds}s")
+                newTimerSeconds = currentUserData.timerSeconds // Используем текущие timerSeconds, если они были сохранены на паузе
+                commentAction = "Таймер возобновлен"
             }
+
 
             updateCurrentUserTimerData(
                 UserTimerData(
                     activeTimerId = task.id,
                     timerSeconds = newTimerSeconds,
-                    isPausedForUserAction = false,
+                    isPausedForUserAction = false, // Снимаем пользовательскую паузу
                     pausedTaskIdForUserAction = null,
                     pausedTimerSecondsForUserAction = 0,
                     isSystemPaused = currentUserData.isSystemPaused // Сохраняем состояние системной паузы
@@ -642,6 +694,7 @@ class MainViewModel : ViewModel() {
             if (sendComments) {
                 sendTimerComment(task, commentAction, newTimerSeconds)
             }
+            Timber.i("$commentAction for task ${task.id} at ${newTimerSeconds}s")
 
             // Перемещаем задачу с активным таймером в начало списка
             tasks = tasks.sortedWith(
@@ -656,6 +709,7 @@ class MainViewModel : ViewModel() {
     // Отправка комментария о состоянии таймера
     private fun sendTimerComment(task: Task, action: String, currentSeconds: Int) {
         val user = users[currentUserIndex]
+        Timber.d("Sending timer comment for task ${task.id}, action: '$action', user: ${user.name}, time: ${formatTime(currentSeconds)}")
         val url = "${user.webhookUrl}task.commentitem.add"
 
         val commentText = "$action - ${user.name} (${formatTime(currentSeconds)})"
@@ -673,27 +727,33 @@ class MainViewModel : ViewModel() {
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                println("Comment send error: ${e.message}")
+                Timber.e(e, "Comment send error for task ${task.id}")
             }
 
             override fun onResponse(call: Call, response: Response) {
                 response.body?.let { body ->
                     val responseText = body.string()
-                    println("Comment response: $responseText")
+                    if (response.isSuccessful) {
+                        Timber.d("Comment sent successfully for task ${task.id}. Response: $responseText")
+                    } else {
+                        Timber.w("Failed to send comment for task ${task.id}. Code: ${response.code}. Response: $responseText")
+                    }
                 }
+                response.close()
             }
         })
     }
 
     // Сохранение времени в Битрикс при остановке таймера
     private fun stopTimerAndSaveTime(task: Task, secondsToSave: Int) {
+        val user = users[currentUserIndex]
+        Timber.i("stopTimerAndSaveTime called for task ${task.id}, user ${user.name}, seconds: $secondsToSave")
         // Сохраняем время только если прошло больше 10 секунд
         if (secondsToSave < 10) {
-            println("Timer too short (${secondsToSave}s), not saving to Bitrix for task ${task.id}")
+            Timber.i("Timer too short (${secondsToSave}s), not saving to Bitrix for task ${task.id}")
             return
         }
 
-        val user = users[currentUserIndex]
         val url = "${user.webhookUrl}task.elapseditem.add"
 
         // Используем правильную структуру для task.elapseditem.add
@@ -712,7 +772,7 @@ class MainViewModel : ViewModel() {
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 viewModelScope.launch {
-                    println("Save time network error: ${e.message}")
+                    Timber.e(e, "Save time network error for task ${task.id}")
                 }
             }
 
@@ -720,25 +780,25 @@ class MainViewModel : ViewModel() {
                 viewModelScope.launch {
                     response.body?.let { body ->
                         val responseText = body.string()
-                        println("Save time response: $responseText")
+                        Timber.d("Save time response for task ${task.id}: $responseText")
 
                         try {
                             val json = JSONObject(responseText)
                             if (json.has("error")) {
-                                val errorCode = json.optInt("error", 0)
-
-                                // Пробуем упрощенный вариант
-                                println("Trying simplified parameters...")
+                                val errorDesc = json.optString("error_description", "Unknown error")
+                                Timber.w("Error saving time for task ${task.id}: $errorDesc. Trying simplified parameters...")
                                 saveTimeSimplified(task, secondsToSave)
                             } else if (json.has("result")) {
+                                Timber.i("Time saved successfully for task ${task.id}. Reloading tasks.")
                                 // Успешно сохранено - обновляем задачи без уведомления
                                 delay(1000)
                                 loadTasks()
                             }
                         } catch (e: Exception) {
-                            println("Parse error: ${e.message}")
+                            Timber.e(e, "Parse error in save time response for task ${task.id}")
                         }
                     }
+                    response.close()
                 }
             }
         })
@@ -747,6 +807,7 @@ class MainViewModel : ViewModel() {
     // Упрощенный способ сохранения времени без USER_ID
     private fun saveTimeSimplified(task: Task, secondsToSave: Int) {
         val user = users[currentUserIndex]
+        Timber.i("saveTimeSimplified called for task ${task.id}, user ${user.name}, seconds: $secondsToSave")
         val url = "${user.webhookUrl}task.elapseditem.add"
 
         val formBody = FormBody.Builder()
@@ -763,7 +824,7 @@ class MainViewModel : ViewModel() {
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 viewModelScope.launch {
-                    println("Simplified save time error: ${e.message}")
+                    Timber.e(e, "Simplified save time error for task ${task.id}")
                 }
             }
 
@@ -771,27 +832,34 @@ class MainViewModel : ViewModel() {
                 viewModelScope.launch {
                     response.body?.let { body ->
                         val responseText = body.string()
-                        println("Simplified save time response: $responseText")
+                        Timber.d("Simplified save time response for task ${task.id}: $responseText")
 
                         try {
                             val json = JSONObject(responseText)
                             if (json.has("result")) {
+                                Timber.i("Time saved successfully (simplified) for task ${task.id}. Reloading tasks.")
                                 // Успешно сохранено - обновляем задачи
                                 delay(1000)
                                 loadTasks()
+                            } else {
+                                val errorDesc = json.optString("error_description", "Unknown error")
+                                Timber.w("Error saving time (simplified) for task ${task.id}: $errorDesc")
                             }
                         } catch (e: Exception) {
-                            println("Simplified parse error: ${e.message}")
+                            Timber.e(e, "Simplified parse error in save time response for task ${task.id}")
                         }
                     }
+                    response.close()
                 }
             }
         })
     }
 
-    // Приостановка таймера из-за системных событий (перерыв, обед)
-    private fun systemPauseTimer() {
+    // Приостановка таймера ЗАДАЧИ из-за системных событий (перерыв, обед, конец дня)
+    // Не влияет на timeman напрямую, это делает updateWorkStatus
+    private fun systemPauseTaskTimerOnly() {
         val currentUserData = getCurrentUserTimerData()
+        val user = users[currentUserIndex]
         if (currentUserData.activeTimerId != null && !currentUserData.isSystemPaused) {
             val task = tasks.find { it.id == currentUserData.activeTimerId }
             updateCurrentUserTimerData(
@@ -800,15 +868,17 @@ class MainViewModel : ViewModel() {
                 )
             )
             if (sendComments && task != null) {
-                sendTimerComment(task, "Таймер системно приостановлен (перерыв/обед)", currentUserData.timerSeconds)
+                sendTimerComment(task, "Таймер задачи системно приостановлен (перерыв/обед/конец дня)", currentUserData.timerSeconds)
             }
-            println("Timer system-paused for task ${currentUserData.activeTimerId} with ${currentUserData.timerSeconds}s")
+            Timber.i("Task timer system-paused for task ${currentUserData.activeTimerId} for user ${user.name} with ${currentUserData.timerSeconds}s")
         }
     }
 
-    // Возобновление таймера после системных событий
-    private fun systemResumeTimer() {
+    // Возобновление таймера ЗАДАЧИ после системных событий
+    // Не влияет на timeman напрямую, это делает updateWorkStatus
+    private fun systemResumeTaskTimerOnly() {
         val currentUserData = getCurrentUserTimerData()
+        val user = users[currentUserIndex]
         if (currentUserData.activeTimerId != null && currentUserData.isSystemPaused) {
             val task = tasks.find { it.id == currentUserData.activeTimerId }
             updateCurrentUserTimerData(
@@ -817,9 +887,9 @@ class MainViewModel : ViewModel() {
                 )
             )
             if (sendComments && task != null) {
-                sendTimerComment(task, "Таймер системно возобновлен", currentUserData.timerSeconds)
+                sendTimerComment(task, "Таймер задачи системно возобновлен", currentUserData.timerSeconds)
             }
-            println("Timer system-resumed for task ${currentUserData.activeTimerId} with ${currentUserData.timerSeconds}s")
+            Timber.i("Task timer system-resumed for task ${currentUserData.activeTimerId} for user ${user.name} with ${currentUserData.timerSeconds}s")
         }
     }
 
@@ -837,8 +907,15 @@ class MainViewModel : ViewModel() {
 
     fun completeTask(task: Task) {
         val currentUserData = getCurrentUserTimerData()
-        // Если есть активный таймер на этой задаче, сначала сохраняем время
-        if (currentUserData.activeTimerId == task.id && currentUserData.timerSeconds > 0) {
+        val user = users[currentUserIndex]
+        Timber.i("Complete task called for task ${task.id} by user ${user.name}")
+
+        // Если есть активный таймер на этой задаче (не на системной паузе и не на пользовательской), сначала сохраняем время
+        if (currentUserData.activeTimerId == task.id &&
+            !currentUserData.isSystemPaused &&
+            !currentUserData.isPausedForUserAction && // Убедимся, что таймер действительно "шел"
+            currentUserData.timerSeconds > 0) {
+            Timber.d("Task ${task.id} has an active timer with ${currentUserData.timerSeconds}s. Stopping and saving time first.")
             stopTimerAndSaveTime(task, currentUserData.timerSeconds)
             if (sendComments) {
                 sendTimerComment(task, "Задача завершена, таймер остановлен", currentUserData.timerSeconds)
@@ -851,13 +928,29 @@ class MainViewModel : ViewModel() {
                 completeTaskInBitrix(task)
             }
         } else {
-            // Если таймер не был активен для этой задачи, или время 0, просто завершаем
-            completeTaskInBitrix(task)
+            if (currentUserData.activeTimerId == task.id && currentUserData.isPausedForUserAction && currentUserData.pausedTimerSecondsForUserAction > 0) {
+                // Если таймер был на пользовательской паузе с накопленным временем
+                Timber.d("Task ${task.id} was on user pause with ${currentUserData.pausedTimerSecondsForUserAction}s. Saving this time.")
+                stopTimerAndSaveTime(task, currentUserData.pausedTimerSecondsForUserAction)
+                 if (sendComments) {
+                    sendTimerComment(task, "Задача завершена (с учетом времени на паузе), таймер остановлен", currentUserData.pausedTimerSecondsForUserAction)
+                }
+                updateCurrentUserTimerData(UserTimerData()) // Сбрасываем таймер
+                 viewModelScope.launch {
+                    delay(1500) // Даем время на сохранение
+                    completeTaskInBitrix(task)
+                }
+            } else {
+                 // Если таймер не был активен для этой задачи, или время 0, просто завершаем
+                Timber.d("Task ${task.id} timer was not active or had 0 seconds. Completing directly.")
+                completeTaskInBitrix(task)
+            }
         }
     }
 
     private fun completeTaskInBitrix(task: Task) {
         val user = users[currentUserIndex]
+        Timber.i("Sending completeTaskInBitrix for task ${task.id}, user ${user.name}")
         val url = "${user.webhookUrl}tasks.task.complete"
 
         val formBody = FormBody.Builder()
@@ -872,7 +965,7 @@ class MainViewModel : ViewModel() {
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 viewModelScope.launch {
-                    println("Task complete network error: ${e.message}")
+                    Timber.e(e, "Task complete network error for task ${task.id}")
                 }
             }
 
@@ -880,13 +973,18 @@ class MainViewModel : ViewModel() {
                 viewModelScope.launch {
                     response.body?.let { body ->
                         val responseText = body.string()
-                        println("Task complete response: $responseText")
+                        if (response.isSuccessful) {
+                            Timber.i("Task ${task.id} completed successfully in Bitrix. Response: $responseText")
+                        } else {
+                            Timber.w("Failed to complete task ${task.id} in Bitrix. Code: ${response.code}. Response: $responseText")
+                        }
 
                         // В любом случае обновляем задачи через 1 секунду
-                        // (задача скорее всего завершена успешно)
+                        // (задача скорее всего завершена успешно или статус изменился)
                         delay(1000)
                         loadTasks()
                     }
+                    response.close()
                 }
             }
         })
@@ -894,6 +992,7 @@ class MainViewModel : ViewModel() {
 
     fun toggleComments() {
         sendComments = !sendComments
+        Timber.i("Send comments toggled to: $sendComments")
     }
 
     private fun startUniversalTimerLoop() {
@@ -923,27 +1022,123 @@ class MainViewModel : ViewModel() {
         val currentMinutes = hour * 60 + minute
 
         val previousStatus = workStatus
+        val currentUser = users[currentUserIndex] // Получаем текущего пользователя
 
-        workStatus = when {
-            currentMinutes < 7 * 60 + 50 -> WorkStatus.BEFORE_WORK
-            currentMinutes in (9 * 60 + 45)..(10 * 60) -> WorkStatus.BREAK
-            currentMinutes in (12 * 60)..(12 * 60 + 48) -> WorkStatus.LUNCH
-            currentMinutes in (14 * 60 + 45)..(15 * 60) -> WorkStatus.BREAK
-            currentMinutes >= 17 * 60 -> WorkStatus.AFTER_WORK
+        val newWorkStatus = when {
+            currentMinutes < 7 * 60 + 50 -> WorkStatus.BEFORE_WORK // До 07:50
+            currentMinutes in (9 * 60 + 45)..(10 * 60 + 0) -> WorkStatus.BREAK // 09:45 - 10:00
+            currentMinutes in (12 * 60 + 0)..(12 * 60 + 48) -> WorkStatus.LUNCH // 12:00 - 12:48
+            currentMinutes in (14 * 60 + 45)..(15 * 60 + 0) -> WorkStatus.BREAK // 14:45 - 15:00
+            currentMinutes >= 17 * 60 + 0 -> WorkStatus.AFTER_WORK // После 17:00
             else -> WorkStatus.WORKING
         }
 
-        // Автоматическая пауза/возобновление таймера
-        if (previousStatus == WorkStatus.WORKING &&
-            (workStatus == WorkStatus.BREAK || workStatus == WorkStatus.LUNCH)) {
-            // Переходим на перерыв - системно приостанавливаем таймер
-            systemPauseTimer()
-        } else if ((previousStatus == WorkStatus.BREAK || previousStatus == WorkStatus.LUNCH) &&
-            workStatus == WorkStatus.WORKING) {
-            // Возвращаемся с перерыва - системно возобновляем таймер
-            systemResumeTimer()
+        if (previousStatus != newWorkStatus) {
+            Timber.i("Work status changing for user ${currentUser.name} from $previousStatus to $newWorkStatus")
+            workStatus = newWorkStatus // Обновляем статус
+
+            when {
+                // Начало рабочего дня (из BEFORE_WORK) или возобновление работы (из BREAK/LUNCH)
+                (previousStatus == WorkStatus.BEFORE_WORK || previousStatus == WorkStatus.BREAK || previousStatus == WorkStatus.LUNCH) && workStatus == WorkStatus.WORKING -> {
+                    timemanOpenWorkDay(currentUser)
+                    systemResumeTaskTimerOnly() // Возобновляем таймер задачи, если он был на системной паузе
+                }
+                // Уход на перерыв/обед
+                previousStatus == WorkStatus.WORKING && (workStatus == WorkStatus.BREAK || workStatus == WorkStatus.LUNCH) -> {
+                    timemanPauseWorkDay(currentUser)
+                    systemPauseTaskTimerOnly() // Приостанавливаем таймер задачи
+                }
+                // Конец рабочего дня
+                previousStatus == WorkStatus.WORKING && workStatus == WorkStatus.AFTER_WORK -> {
+                    timemanCloseWorkDay(currentUser)
+                    systemPauseTaskTimerOnly() // Приостанавливаем таймер задачи
+                }
+                // Другие переходы (например, BREAK -> LUNCH) не требуют действий с timeman или таймером задачи
+                else -> {
+                    Timber.d("Work status changed from $previousStatus to $workStatus, no specific timeman/task_timer action required for this transition.")
+                }
+            }
+        } else {
+            // Статус не изменился, но если мы в рабочем состоянии и день не открыт (например, после перезапуска приложения), пытаемся открыть.
+            // Это более сложная логика, требующая проверки timeman.status, пока опустим для простоты.
         }
     }
+
+
+    // --- Timeman API Calls ---
+    private fun timemanOpenWorkDay(user: User) {
+        Timber.i("Attempting to open workday for user ${user.name} (ID: ${user.userId})")
+        val url = "${user.webhookUrl}timeman.open"
+        val request = Request.Builder()
+            .url(url)
+            .post(FormBody.Builder().build()) // Обычно параметры не нужны
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                Timber.e(e, "Failed to open workday for user ${user.name}")
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val responseBody = response.body?.string()
+                if (response.isSuccessful) {
+                    Timber.i("Successfully opened workday for user ${user.name}. Response: $responseBody")
+                } else {
+                    Timber.w("Failed to open workday for user ${user.name}. Code: ${response.code}. Response: $responseBody")
+                }
+                response.close()
+            }
+        })
+    }
+
+    private fun timemanPauseWorkDay(user: User) {
+        Timber.i("Attempting to pause workday for user ${user.name} (ID: ${user.userId})")
+        val url = "${user.webhookUrl}timeman.pause"
+        val request = Request.Builder()
+            .url(url)
+            .post(FormBody.Builder().build()) // Обычно параметры не нужны
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                Timber.e(e, "Failed to pause workday for user ${user.name}")
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val responseBody = response.body?.string()
+                if (response.isSuccessful) {
+                    Timber.i("Successfully paused workday for user ${user.name}. Response: $responseBody")
+                } else {
+                    Timber.w("Failed to pause workday for user ${user.name}. Code: ${response.code}. Response: $responseBody")
+                }
+                response.close()
+            }
+        })
+    }
+
+    private fun timemanCloseWorkDay(user: User) {
+        Timber.i("Attempting to close workday for user ${user.name} (ID: ${user.userId})")
+        val url = "${user.webhookUrl}timeman.close"
+        val request = Request.Builder()
+            .url(url)
+            .post(FormBody.Builder().build()) // Обычно параметры не нужны
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                Timber.e(e, "Failed to close workday for user ${user.name}")
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val responseBody = response.body?.string()
+                if (response.isSuccessful) {
+                    Timber.i("Successfully closed workday for user ${user.name}. Response: $responseBody")
+                } else {
+                    Timber.w("Failed to close workday for user ${user.name}. Code: ${response.code}. Response: $responseBody")
+                }
+                response.close()
+            }
+        })
+    }
+    // --- End Timeman API Calls ---
+
 
     private fun startPeriodicUpdates() {
         viewModelScope.launch {
@@ -995,6 +1190,17 @@ class MainViewModel : ViewModel() {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Инициализация Timber для логирования в файл
+        // Делаем это один раз при создании Activity
+        if (Timber.treeCount == 0) { // Проверяем, чтобы не добавить дерево логгера многократно
+            Timber.plant(FileLoggingTree(applicationContext))
+            Timber.i("MainActivity onCreate: Timber FileLoggingTree planted.")
+        } else {
+            Timber.i("MainActivity onCreate: Timber already planted.")
+        }
+
+
         setContent {
             Bitrix_appTheme {
                 MainScreen()
