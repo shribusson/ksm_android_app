@@ -2530,10 +2530,29 @@ fun TaskCard(
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp), // Увеличиваем высоту кнопки
                     enabled = !isTimerSystemPausedForThisTask,
                     elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
-                    colors = remember(isTimerRunningForThisTask, isTimerUserPausedForThisTask, isTimerSystemPausedForThisTask, MaterialTheme.colorScheme) {
-                        ButtonDefaults.elevatedButtonColors( // Используем elevatedButtonColors
-                            containerColor = when {
-                                isTimerRunningForThisTask -> MaterialTheme.colorScheme.error // Используем цвет ошибки для "Стоп"
+                    colors = run {
+                        val rememberedColors = remember(isTimerRunningForThisTask, isTimerUserPausedForThisTask, isTimerSystemPausedForThisTask, MaterialTheme.colorScheme) {
+                            ButtonDefaults.elevatedButtonColors( // Используем elevatedButtonColors
+                                containerColor = when {
+                                    isTimerRunningForThisTask -> MaterialTheme.colorScheme.error // Используем цвет ошибки для "Стоп"
+                                    isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.tertiary // Зеленый для "Продолжить"
+                                    isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f) // Цвет для disabled
+                                    else -> MaterialTheme.colorScheme.primary // Основной цвет для "Старт"
+                                },
+                                contentColor = when {
+                                    isTimerRunningForThisTask -> MaterialTheme.colorScheme.onError
+                                    isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.onTertiary
+                                    isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) // Заменяем на фактическое значение
+                                    else -> MaterialTheme.colorScheme.onPrimary
+                                },
+                                disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                                disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) // Заменяем на фактическое значение
+                            )
+                        }
+                        rememberedColors
+                    }
+                ) {
+                    Text(
                                 isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.tertiary // Зеленый для "Продолжить"
                                 isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f) // Цвет для disabled
                                 else -> MaterialTheme.colorScheme.primary // Основной цвет для "Старт"
@@ -2566,11 +2585,14 @@ fun TaskCard(
                         onClick = { onCompleteTask(task) },
                         modifier = Modifier.weight(1f).heightIn(min = 52.dp), // Увеличиваем высоту кнопки
                         elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
-                        colors = remember(ProgressBarGreen, MaterialTheme.colorScheme.onPrimary) {
-                            ButtonDefaults.elevatedButtonColors(
-                                containerColor = ProgressBarGreen,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            )
+                        colors = run {
+                            val rememberedColors = remember(ProgressBarGreen, MaterialTheme.colorScheme.onPrimary) {
+                                ButtonDefaults.elevatedButtonColors(
+                                    containerColor = ProgressBarGreen,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            }
+                            rememberedColors
                         }
                     ) {
                         Icon(Icons.Filled.Check, contentDescription = "Завершить", modifier = Modifier.size(20.dp))
@@ -2610,8 +2632,11 @@ fun TaskCard(
                             .heightIn(min = 52.dp)
                             .shadow(elevation = 2.dp, shape = CircleShape) // Тень для IconButton
                             .background(
-                                color = remember(isCurrentlyRecordingThisTask, MaterialTheme.colorScheme) {
-                                    if (isCurrentlyRecordingThisTask) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                                color = run {
+                                    val rememberedColor = remember(isCurrentlyRecordingThisTask, MaterialTheme.colorScheme) {
+                                        if (isCurrentlyRecordingThisTask) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                                    }
+                                    rememberedColor
                                 },
                                 shape = CircleShape
                             )
