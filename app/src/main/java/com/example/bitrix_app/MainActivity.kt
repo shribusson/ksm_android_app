@@ -30,6 +30,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow // <--- Добавляем этот импорт
 import androidx.compose.ui.graphics.Color
 import android.Manifest // Для запроса разрешений
 import android.content.pm.PackageManager // Для проверки разрешений
