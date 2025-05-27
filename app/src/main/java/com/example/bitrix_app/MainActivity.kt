@@ -1247,13 +1247,13 @@ class MainViewModel : ViewModel() {
 
     private fun startAudioRecording(task: Task, context: Context) {
         currentRecordingTask = task
-        val fileName = "audio_comment_${task.id}_${System.currentTimeMillis()}.3gp" // Изменено расширение файла
+        val fileName = "audio_comment_${task.id}_${System.currentTimeMillis()}.webm" // Изменено расширение файла
         audioOutputFile = java.io.File(context.cacheDir, fileName)
 
         mediaRecorder = MediaRecorder(context).apply { // Для API 31+ нужен контекст
             setAudioSource(MediaRecorder.AudioSource.MIC)
-            setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP) // Изменен формат вывода
-            setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB) // Изменен аудиокодер
+            setOutputFormat(MediaRecorder.OutputFormat.WEBM) // Изменен формат вывода
+            setAudioEncoder(MediaRecorder.AudioEncoder.VORBIS) // Изменен аудиокодер
             setOutputFile(audioOutputFile?.absolutePath)
             try {
                 prepare()
@@ -1451,8 +1451,8 @@ class MainViewModel : ViewModel() {
             .add("fileContent[1]", fileBase64) // Содержимое файла в Base64 как второй элемент
             .build()
         // При отправке Base64 MIME-тип в RequestBody не используется напрямую для файла,
-        // но если бы мы отправляли бинарный файл (не Base64), здесь был бы, например, audio/3gpp
-        // val requestBodyForBinaryFile = file.asRequestBody("audio/3gpp".toMediaTypeOrNull())
+        // но если бы мы отправляли бинарный файл (не Base64), здесь был бы, например, audio/webm
+        // val requestBodyForBinaryFile = file.asRequestBody("audio/webm".toMediaTypeOrNull())
 
         val request = Request.Builder().url(url).post(formBody).build()
 
