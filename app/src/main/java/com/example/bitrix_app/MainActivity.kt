@@ -1454,19 +1454,21 @@ class MainViewModel : ViewModel() {
 
             override fun onResponse(call: Call, response: Response) {
                 try {
+                    val responseBodyString = response.body?.string() // Читаем тело ответа один раз
+
                     if (!response.isSuccessful) {
-                        Timber.w("File upload failed for ${file.name}. Code: ${response.code}, Message: ${response.message}")
+                        Timber.w("File upload failed for ${file.name}. Code: ${response.code}, Message: ${response.message}. Response Body: $responseBodyString")
                         if (continuation.isActive) continuation.resume(null)
                         return
                     }
-                    val responseBody = response.body?.string()
-                    if (responseBody == null) {
+                    // val responseBody = response.body?.string() // Уже прочитано выше
+                    if (responseBodyString == null) { // Используем прочитанное тело
                         Timber.w("File upload response body is null for ${file.name}")
                         if (continuation.isActive) continuation.resume(null)
                         return
                     }
-                    Timber.d("File upload response for ${file.name}: $responseBody")
-                    val json = JSONObject(responseBody)
+                    Timber.d("File upload response for ${file.name}: $responseBodyString")
+                    val json = JSONObject(responseBodyString)
                     if (json.has("result")) {
                         val resultObject = json.getJSONObject("result")
                         val uploadedFileId = resultObject.optString("ID")
