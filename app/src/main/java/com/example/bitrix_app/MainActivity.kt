@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import android.Manifest // Для запроса разрешений
 import android.content.pm.PackageManager // Для проверки разрешений
 import android.media.MediaRecorder
+import android.util.Base64 // Для кодирования в Base64
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext // Для LocalContext.current
 import androidx.compose.ui.res.painterResource
@@ -1431,20 +1432,26 @@ class MainViewModel : ViewModel() {
 
     private suspend fun uploadFileToStorage(user: User, storageId: String, file: java.io.File): String? = suspendCancellableCoroutine { continuation ->
         val url = "${user.webhookUrl}disk.storage.uploadfile"
-        Timber.d("Uploading file ${file.name} to storage $storageId for user ${user.userId}. URL: $url")
+        Timber.d("Uploading file ${file.name} to storage $storageId for user ${user.userId} using Base64. URL: $url")
 
-        val requestBody = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart("id", storageId) // ID хранилища
-            // .addFormDataPart("data[NAME]", file.name) // Попробуем убрать этот параметр
-            .addFormDataPart(
-                "fileContent",
-                file.name, // Имя файла будет в Content-Disposition этой части
-                file.asRequestBody("audio/m4a".toMediaTypeOrNull())
-            )
+        val fileBytes = try {
+            file.readBytes()
+        } catch (e: IOException) {
+            Timber.e(e, "Failed to read file ${file.name} for Base64 encoding")
+            if (continuation.isActive) continuation.resume(null)
+            return@suspendCancellableCoroutine
+        }
+
+        val fileBase64 = Base64.encodeToString(fileBytes, Base64.NO_WRAP)
+
+        val formBody = FormBody.Builder()
+            .add("id", storageId) // ID хранилища
+            .add("data[NAME]", file.name) // Имя файла, как описано для disk.folder.uploadfile
+            .add("fileContent[0]", file.name) // Имя файла как первый элемент массива fileContent
+            .add("fileContent[1]", fileBase64) // Содержимое файла в Base64 как второй элемент
             .build()
 
-        val request = Request.Builder().url(url).post(requestBody).build()
+        val request = Request.Builder().url(url).post(formBody).build()
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
