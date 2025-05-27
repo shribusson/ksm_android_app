@@ -2124,13 +2124,14 @@ fun UserAvatar(user: User, size: Int) {
 
 @Composable
 fun WorkStatusIcon(workStatus: WorkStatus) {
-    val (icon, color, contentColor) = remember(workStatus, MaterialTheme.colorScheme, StatusOrange, StatusRed) {
+    val scheme = MaterialTheme.colorScheme // Считываем схему один раз
+    val (icon, color, contentColor) = remember(workStatus, scheme, StatusOrange, StatusRed) {
         when (workStatus) {
-            WorkStatus.BEFORE_WORK -> Triple("🌅", Color.Gray, MaterialTheme.colorScheme.onSurface)
-            WorkStatus.WORKING -> Triple("💼", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
-            WorkStatus.BREAK -> Triple("☕", StatusOrange, MaterialTheme.colorScheme.onSurfaceVariant)
-            WorkStatus.LUNCH -> Triple("🍽️", StatusRed, MaterialTheme.colorScheme.onSurfaceVariant)
-            WorkStatus.AFTER_WORK -> Triple("🌆", Color.Gray, MaterialTheme.colorScheme.onSurface)
+            WorkStatus.BEFORE_WORK -> Triple("🌅", Color.Gray, scheme.onSurface)
+            WorkStatus.WORKING -> Triple("💼", scheme.tertiaryContainer, scheme.onTertiaryContainer)
+            WorkStatus.BREAK -> Triple("☕", StatusOrange, scheme.onSurfaceVariant)
+            WorkStatus.LUNCH -> Triple("🍽️", StatusRed, scheme.onSurfaceVariant)
+            WorkStatus.AFTER_WORK -> Triple("🌆", Color.Gray, scheme.onSurface)
         }
     }
 
@@ -2169,6 +2170,7 @@ fun TaskCard(
             }
         }
     }
+    val scheme = MaterialTheme.colorScheme // Считываем схему один раз
 
     val cardContainerColor = remember(
         task.isCompleted,
@@ -2176,7 +2178,7 @@ fun TaskCard(
         isTimerUserPausedForThisTask,
         isTimerSystemPausedForThisTask,
         task.isOverdue,
-        MaterialTheme.colorScheme.surfaceVariant,
+        scheme.surfaceVariant, // Используем считанную схему
         StatusGreen, StatusBlue, StatusYellow, StatusOrange, StatusRed
     ) {
         when {
@@ -2185,7 +2187,7 @@ fun TaskCard(
             isTimerUserPausedForThisTask -> StatusYellow
             isTimerSystemPausedForThisTask -> StatusOrange
             task.isOverdue -> StatusRed
-            else -> MaterialTheme.colorScheme.surfaceVariant
+            else -> scheme.surfaceVariant // Используем считанную схему
         }
     }
 
@@ -2228,21 +2230,21 @@ fun TaskCard(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-
-                val statusTextColor = remember(task.isCompleted, task.isInProgress, task.isPending, MaterialTheme.colorScheme, StatusOrange) {
+                // scheme уже определена выше в TaskCard
+                val statusTextColor = remember(task.isCompleted, task.isInProgress, task.isPending, scheme, StatusOrange) {
                     when {
-                        task.isCompleted -> MaterialTheme.colorScheme.tertiary
-                        task.isInProgress -> MaterialTheme.colorScheme.primary
-                        task.isPending -> StatusOrange 
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        task.isCompleted -> scheme.tertiary
+                        task.isInProgress -> scheme.primary
+                        task.isPending -> StatusOrange
+                        else -> scheme.onSurfaceVariant
                     }
                 }
-                val statusTextBackgroundColor = remember(task.isCompleted, task.isInProgress, task.isPending, MaterialTheme.colorScheme, StatusOrange) {
+                val statusTextBackgroundColor = remember(task.isCompleted, task.isInProgress, task.isPending, scheme, StatusOrange) {
                     when {
-                        task.isCompleted -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
-                        task.isInProgress -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                        task.isCompleted -> scheme.tertiaryContainer.copy(alpha = 0.3f)
+                        task.isInProgress -> scheme.primaryContainer.copy(alpha = 0.3f)
                         task.isPending -> StatusOrange.copy(alpha = 0.3f)
-                        else -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                        else -> scheme.secondaryContainer.copy(alpha = 0.3f)
                     }
                 }
 
@@ -2278,7 +2280,7 @@ fun TaskCard(
                 progress = progress,
                 modifier = Modifier.fillMaxWidth().height(8.dp), // Увеличиваем толщину
                 color = progressIndicatorColor,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant
+                trackColor = scheme.surfaceVariant // Используем scheme
             )
 
             Spacer(modifier = Modifier.height(12.dp)) // Увеличиваем отступ
@@ -2292,10 +2294,10 @@ fun TaskCard(
                 Text(
                     text = "Время: ${task.formattedTime}",
                     fontSize = 14.sp, // Увеличиваем шрифт
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = scheme.onSurfaceVariant // Используем scheme
                 )
-                val progressTextColor = remember(task.isOverdue, MaterialTheme.colorScheme.error, MaterialTheme.colorScheme.onSurfaceVariant) {
-                    if (task.isOverdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                val progressTextColor = remember(task.isOverdue, scheme.error, scheme.onSurfaceVariant) {
+                    if (task.isOverdue) scheme.error else scheme.onSurfaceVariant
                 }
                 Text(
                     text = "${task.progressPercent}%",
@@ -2358,10 +2360,10 @@ fun TaskCard(
                                 Text(
                                     text = "Потрачено:",
                                     fontSize = 14.sp, // Увеличиваем шрифт
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = scheme.onSurfaceVariant // Используем scheme
                                 )
-                                val spentTimeColor = remember(task.isOverdue, MaterialTheme.colorScheme.error, ProgressBarGreen) {
-                                    if (task.isOverdue) MaterialTheme.colorScheme.error else ProgressBarGreen
+                                val spentTimeColor = remember(task.isOverdue, scheme.error, ProgressBarGreen) {
+                                    if (task.isOverdue) scheme.error else ProgressBarGreen
                                 }
                                 Text(
                                     text = "${task.timeSpent / 3600}:${String.format("%02d", (task.timeSpent % 3600) / 60)}",
@@ -2375,13 +2377,13 @@ fun TaskCard(
                                 Text(
                                     text = "Планируется:",
                                     fontSize = 14.sp, // Увеличиваем шрифт
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = scheme.onSurfaceVariant // Используем scheme
                                 )
                                 Text(
                                     text = "${task.timeEstimate / 3600}:${String.format("%02d", (task.timeEstimate % 3600) / 60)}",
                                     fontSize = 16.sp, // Увеличиваем шрифт
                                     fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary // Или другой подходящий
+                                    color = scheme.primary // Используем scheme
                                 )
                             }
 
@@ -2389,7 +2391,7 @@ fun TaskCard(
                                 Text(
                                     text = "Процент:",
                                     fontSize = 14.sp, // Увеличиваем шрифт
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = scheme.onSurfaceVariant // Используем scheme
                                 )
                                 val detailedProgressColor = remember(task.progressPercent, ProgressBarRed, ProgressBarOrange, ProgressBarGreen) {
                                     when {
@@ -2439,13 +2441,13 @@ fun TaskCard(
                                 onCheckedChange = { _ -> onToggleItem() }, // Используем onToggleItem
                                 enabled = true,
                                 colors = CheckboxDefaults.colors(
-                                    checkedColor = MaterialTheme.colorScheme.primary,
-                                    uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    checkedColor = scheme.primary, // Используем scheme
+                                    uncheckedColor = scheme.onSurfaceVariant // Используем scheme
                                 )
                             )
                             Spacer(modifier = Modifier.width(8.dp)) // Отступ между чекбоксом и текстом
-                            val checklistItemColor = remember(item.isComplete, MaterialTheme.colorScheme.onSurfaceVariant, MaterialTheme.colorScheme.onSurface) {
-                                if (item.isComplete) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                            val checklistItemColor = remember(item.isComplete, scheme.onSurfaceVariant, scheme.onSurface) {
+                                if (item.isComplete) scheme.onSurfaceVariant else scheme.onSurface
                             }
                             Text(
                                 text = item.title,
@@ -2491,12 +2493,12 @@ fun TaskCard(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    val subtaskStatusColor = remember(subtask.isCompleted, subtask.isInProgress, subtask.isPending, MaterialTheme.colorScheme, StatusOrange) {
-                                        when { 
-                                            subtask.isCompleted -> MaterialTheme.colorScheme.tertiary
-                                            subtask.isInProgress -> MaterialTheme.colorScheme.primary
-                                            subtask.isPending -> StatusOrange 
-                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    val subtaskStatusColor = remember(subtask.isCompleted, subtask.isInProgress, subtask.isPending, scheme, StatusOrange) {
+                                        when {
+                                            subtask.isCompleted -> scheme.tertiary
+                                            subtask.isInProgress -> scheme.primary
+                                            subtask.isPending -> StatusOrange
+                                            else -> scheme.onSurfaceVariant
                                         }
                                     }
                                     Text(
@@ -2507,7 +2509,7 @@ fun TaskCard(
                                     Text(
                                         text = "Время: ${subtask.formattedTime}",
                                         fontSize = 14.sp, // Увеличиваем шрифт
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = scheme.onSurfaceVariant // Используем scheme
                                     )
                                 }
                             }
@@ -2531,22 +2533,23 @@ fun TaskCard(
                     enabled = !isTimerSystemPausedForThisTask,
                     elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
                     colors = run {
-                        val rememberedColors = remember(isTimerRunningForThisTask, isTimerUserPausedForThisTask, isTimerSystemPausedForThisTask, MaterialTheme.colorScheme) {
-                            ButtonDefaults.elevatedButtonColors( // Используем elevatedButtonColors
+                        // scheme уже определена выше в TaskCard
+                        val rememberedColors = remember(isTimerRunningForThisTask, isTimerUserPausedForThisTask, isTimerSystemPausedForThisTask, scheme) {
+                            ButtonDefaults.elevatedButtonColors(
                                 containerColor = when {
-                                    isTimerRunningForThisTask -> MaterialTheme.colorScheme.error // Используем цвет ошибки для "Стоп"
-                                    isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.tertiary // Зеленый для "Продолжить"
-                                    isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f) // Цвет для disabled
-                                    else -> MaterialTheme.colorScheme.primary // Основной цвет для "Старт"
+                                    isTimerRunningForThisTask -> scheme.error
+                                    isTimerUserPausedForThisTask -> scheme.tertiary
+                                    isTimerSystemPausedForThisTask -> scheme.onSurface.copy(alpha = 0.12f)
+                                    else -> scheme.primary
                                 },
                                 contentColor = when {
-                                    isTimerRunningForThisTask -> MaterialTheme.colorScheme.onError
-                                    isTimerUserPausedForThisTask -> MaterialTheme.colorScheme.onTertiary
-                                    isTimerSystemPausedForThisTask -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) // Заменяем на фактическое значение
-                                    else -> MaterialTheme.colorScheme.onPrimary
+                                    isTimerRunningForThisTask -> scheme.onError
+                                    isTimerUserPausedForThisTask -> scheme.onTertiary
+                                    isTimerSystemPausedForThisTask -> scheme.onSurface.copy(alpha = 0.38f)
+                                    else -> scheme.onPrimary
                                 },
-                                disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
-                                disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) // Заменяем на фактическое значение
+                                disabledContainerColor = scheme.onSurface.copy(alpha = 0.12f),
+                                disabledContentColor = scheme.onSurface.copy(alpha = 0.38f)
                             )
                         }
                         rememberedColors
@@ -2570,10 +2573,11 @@ fun TaskCard(
                         modifier = Modifier.weight(1f).heightIn(min = 52.dp), // Увеличиваем высоту кнопки
                         elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
                         colors = run {
-                            val rememberedColors = remember(ProgressBarGreen, MaterialTheme.colorScheme.onPrimary) {
+                            // scheme уже определена выше в TaskCard
+                            val rememberedColors = remember(ProgressBarGreen, scheme.onPrimary) {
                                 ButtonDefaults.elevatedButtonColors(
                                     containerColor = ProgressBarGreen,
-                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                    contentColor = scheme.onPrimary
                                 )
                             }
                             rememberedColors
@@ -2617,8 +2621,9 @@ fun TaskCard(
                             .shadow(elevation = 2.dp, shape = CircleShape) // Тень для IconButton
                             .background(
                                 color = run {
-                                    val rememberedColor = remember(isCurrentlyRecordingThisTask, MaterialTheme.colorScheme) {
-                                        if (isCurrentlyRecordingThisTask) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                                    // scheme уже определена выше в TaskCard
+                                    val rememberedColor = remember(isCurrentlyRecordingThisTask, scheme) {
+                                        if (isCurrentlyRecordingThisTask) scheme.errorContainer else scheme.secondaryContainer
                                     }
                                     rememberedColor
                                 },
@@ -2627,11 +2632,12 @@ fun TaskCard(
                             .padding(horizontal = 8.dp),
                         enabled = !viewModel.isRecordingAudio || isCurrentlyRecordingThisTask // Кнопка активна если не идет запись ИЛИ идет запись именно этой задачи
                     ) {
-                        val iconAndTint = remember(isCurrentlyRecordingThisTask, MaterialTheme.colorScheme) {
+                        // scheme уже определена выше в TaskCard
+                        val iconAndTint = remember(isCurrentlyRecordingThisTask, scheme) {
                             if (isCurrentlyRecordingThisTask) {
-                                Triple(Icons.Filled.Stop, "Остановить запись", MaterialTheme.colorScheme.onErrorContainer)
+                                Triple(Icons.Filled.Stop, "Остановить запись", scheme.onErrorContainer)
                             } else {
-                                Triple(Icons.Filled.Mic, "Записать аудиокомментарий", MaterialTheme.colorScheme.onSecondaryContainer)
+                                Triple(Icons.Filled.Mic, "Записать аудиокомментарий", scheme.onSecondaryContainer)
                             }
                         }
                         Icon(
