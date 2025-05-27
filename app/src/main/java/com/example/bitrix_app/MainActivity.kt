@@ -17,7 +17,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack // Для кнопки "Назад"
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Refresh // Для кнопки "Обновить"
 import androidx.compose.material.icons.filled.Stop // Для иконки остановки записи
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,6 +33,7 @@ import android.media.MediaRecorder
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext // Для LocalContext.current
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontFamily // Для моноширинного шрифта
 import androidx.compose.ui.text.font.FontWeight
 import androidx.core.content.ContextCompat // Для проверки разрешений
 import androidx.core.content.FileProvider // Для FileProvider
@@ -157,6 +160,10 @@ class MainViewModel : ViewModel() {
 
     private var mediaRecorder: MediaRecorder? = null
     private var audioOutputFile: java.io.File? = null // Используем java.io.File
+
+    // Состояние для отображения логов
+    var logLines by mutableStateOf<List<String>>(emptyList())
+        private set
 
 
     // Вспомогательная функция для получения данных таймера текущего пользователя
@@ -1593,6 +1600,25 @@ class MainViewModel : ViewModel() {
             }
         }
     }
+
+    fun loadLogContent(context: Context) {
+        viewModelScope.launch {
+            try {
+                val logFile = FileLoggingTree.getLogFile(context)
+                if (logFile.exists()) {
+                    val lines = logFile.readLines().reversed() // Читаем строки и переворачиваем (новые сверху)
+                    logLines = lines
+                    Timber.i("Loaded ${lines.size} log lines from ${logFile.name}")
+                } else {
+                    logLines = listOf("Файл логов не найден: ${logFile.absolutePath}")
+                    Timber.w("Log file not found for viewing: ${logFile.absolutePath}")
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Error loading log file for viewing")
+                logLines = listOf("Ошибка при чтении файла логов: ${e.message}")
+            }
+        }
+    }
 }
 
 // UI компоненты
@@ -1612,7 +1638,24 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             Bitrix_appTheme {
-                MainScreen()
+                val viewModel: MainViewModel = viewModel()
+                var showLogScreen by remember { mutableStateOf(false) }
+
+                if (showLogScreen) {
+                    LogViewerScreen(
+                        logLines = viewModel.logLines,
+                        onRefresh = { viewModel.loadLogContent(applicationContext) },
+                        onBack = { showLogScreen = false }
+                    )
+                } else {
+                    MainScreen(
+                        viewModel = viewModel,
+                        onShowLogs = {
+                            viewModel.loadLogContent(applicationContext) // Загружаем логи перед показом
+                            showLogScreen = true
+                        }
+                    )
+                }
             }
         }
     }
@@ -1620,7 +1663,60 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(viewModel: MainViewModel = viewModel()) {
+fun LogViewerScreen(
+    logLines: List<String>,
+    onRefresh: () -> Unit,
+    onBack: () -> Unit
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Просмотр логов") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "Назад")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onRefresh) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "Обновить")
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(horizontal = 8.dp)
+        ) {
+            if (logLines.isEmpty()) {
+                item {
+                    Text(
+                        "Логи пусты или еще не загружены.",
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
+            } else {
+                items(logLines) { line ->
+                    Text(
+                        text = line,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Divider(thickness = 0.5.dp)
+                }
+            }
+        }
+    }
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) { // Добавлен параметр onShowLogs
     var isUserMenuExpanded by remember { mutableStateOf(false) }
     var isSettingsExpanded by remember { mutableStateOf(false) }
     val context = LocalContext.current // Получаем контекст здесь, в Composable области
@@ -1719,6 +1815,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             text = { Text("Поделиться логами") },
                             onClick = {
                                 viewModel.shareLogs(context) // Используем контекст, полученный из Composable области
+                                isSettingsExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Посмотреть логи") },
+                            onClick = {
+                                onShowLogs()
                                 isSettingsExpanded = false
                             }
                         )
