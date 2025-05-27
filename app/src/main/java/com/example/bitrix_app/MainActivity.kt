@@ -1478,19 +1478,16 @@ class MainViewModel : ViewModel() {
                     val json = JSONObject(responseBodyString)
                     if (json.has("result")) {
                         val resultObject = json.getJSONObject("result")
-                        var idForBbCode = resultObject.optString("FILE_ID") // Пытаемся получить FILE_ID (b_file ID)
-                        if (idForBbCode.isEmpty()) {
-                            Timber.w("FILE_ID is empty in uploadFileToStorage response for ${file.name}. Falling back to disk object ID.")
-                            idForBbCode = resultObject.optString("ID") // Если FILE_ID пуст, используем ID объекта диска
-                        }
+                        val diskObjectId = resultObject.optString("ID") // ID объекта файла на Диске
+                        val bFileId = resultObject.optString("FILE_ID") // ID файла в b_file (для информации)
 
-                        if (idForBbCode.isNotEmpty()) {
-                            Timber.i("Using ID '$idForBbCode' (tried FILE_ID then ID) for file ${file.name} in BBCode.")
-                            if (continuation.isActive) continuation.resume(idForBbCode)
+                        if (diskObjectId.isNotEmpty()) {
+                            Timber.i("Disk Object ID: '$diskObjectId', b_file ID: '$bFileId'. Using Disk Object ID ('$diskObjectId') for UF_FORUM_MESSAGE_DOC.")
+                            if (continuation.isActive) continuation.resume(diskObjectId) // Возвращаем ID объекта Диска
                             return
                         }
                     }
-                    Timber.w("Neither FILE_ID nor ID found or both are empty in upload response for ${file.name}")
+                    Timber.w("Disk Object ID (result.ID) not found or empty in upload response for ${file.name}")
                     if (continuation.isActive) continuation.resume(null)
                 } catch (e: Exception) {
                     Timber.e(e, "Error parsing file upload response for ${file.name}")
