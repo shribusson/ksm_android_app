@@ -1392,7 +1392,7 @@ class MainViewModel : ViewModel() {
                                 val name = storageObject.optString("NAME", "N/A") // Логируем также имя хранилища для информации
                                 Timber.d("Checking storage object: ID=$id, NAME=$name, ENTITY_ID=$entityId, ENTITY_TYPE=$entityType for user ${user.userId}")
 
-                                if (id.isNotEmpty() && entityId == user.userId && entityType == "USER") {
+                                if (id.isNotEmpty() && entityId == user.userId && entityType.equals("USER", ignoreCase = true)) {
                                     Timber.i("Found matching user storage: ID=$id, NAME=$name, ENTITY_ID=$entityId, ENTITY_TYPE=$entityType for user ${user.userId}")
                                     if (continuation.isActive) continuation.resume(id)
                                     return
@@ -1405,7 +1405,7 @@ class MainViewModel : ViewModel() {
                                 val entityType = storageObject.optString("ENTITY_TYPE")
                                 val id = storageObject.optString("ID")
                                 val name = storageObject.optString("NAME", "N/A")
-                                if (id.isNotEmpty() && entityType == "USER") {
+                                if (id.isNotEmpty() && entityType.equals("USER", ignoreCase = true)) {
                                     Timber.w("Could not find exact user storage for ${user.userId}. Using first available USER storage: ID=$id, NAME=$name, ENTITY_TYPE=$entityType")
                                     if (continuation.isActive) continuation.resume(id)
                                     return
