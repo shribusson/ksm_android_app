@@ -18,6 +18,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack // Для кнопки "Назад"
+import androidx.compose.material.icons.filled.Check // Для галочки завершения
+import androidx.compose.material.icons.filled.ExpandLess // Для иконки "свернуть"
+import androidx.compose.material.icons.filled.ExpandMore // Для иконки "развернуть"
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh // Для кнопки "Обновить"
 import androidx.compose.material.icons.filled.Stop // Для иконки остановки записи
@@ -119,6 +122,11 @@ data class UserTimerData(
     val isSystemPaused: Boolean = false // Пауза из-за системных событий (перерыв, обед)
 )
 
+// Enum для выбора темы
+enum class AppThemeOptions {
+    SYSTEM, LIGHT, DARK, OCEAN, FOREST
+}
+
 // ViewModel
 class MainViewModel : ViewModel() {
     private val client = OkHttpClient()
@@ -166,6 +174,10 @@ class MainViewModel : ViewModel() {
     var logLines by mutableStateOf<List<String>>(emptyList())
         private set
 
+    // Состояние для выбранной темы
+    var selectedTheme by mutableStateOf(AppThemeOptions.SYSTEM)
+        private set
+
 
     // Вспомогательная функция для получения данных таймера текущего пользователя
     fun getCurrentUserTimerData(): UserTimerData {
@@ -190,6 +202,11 @@ class MainViewModel : ViewModel() {
         startPeriodicTaskUpdates()
         startTimeUpdates()
         startUniversalTimerLoop() // Запускаем универсальный цикл таймера
+    }
+
+    fun selectTheme(theme: AppThemeOptions) {
+        selectedTheme = theme
+        Timber.i("App theme changed to: $theme")
     }
 
     fun switchUser(index: Int) {
@@ -1705,8 +1722,8 @@ class MainActivity : ComponentActivity() {
 
 
         setContent {
-            Bitrix_appTheme {
-                val viewModel: MainViewModel = viewModel()
+            val viewModel: MainViewModel = viewModel() // viewModel создается здесь
+            Bitrix_appTheme(appTheme = viewModel.selectedTheme) { // Передаем выбранную тему
                 var showLogScreen by remember { mutableStateOf(false) }
 
                 if (showLogScreen) {
@@ -1879,13 +1896,33 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                                 isSettingsExpanded = false
                             }
                         )
-                        DropdownMenuItem(
-                            text = { Text("Поделиться логами") },
-                            onClick = {
-                                viewModel.shareLogs(context) // Используем контекст, полученный из Composable области
-                                isSettingsExpanded = false
-                            }
-                        )
+                        // --- Пункты выбора темы ---
+                        AppThemeOptions.values().forEach { themeOption ->
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (viewModel.selectedTheme == themeOption) {
+                                            Text("✓ ", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                        } else {
+                                            Text("   ") // Для выравнивания
+                                        }
+                                        Text(when(themeOption) {
+                                            AppThemeOptions.SYSTEM -> "Как в системе"
+                                            AppThemeOptions.LIGHT -> "Светлая"
+                                            AppThemeOptions.DARK -> "Темная"
+                                            AppThemeOptions.OCEAN -> "Океан"
+                                            AppThemeOptions.FOREST -> "Лес"
+                                        })
+                                    }
+                                },
+                                onClick = {
+                                    viewModel.selectTheme(themeOption)
+                                    isSettingsExpanded = false
+                                }
+                            )
+                        }
+                        Divider() // Разделитель перед другими опциями
+                        // --- Конец пунктов выбора темы ---
                         DropdownMenuItem(
                             text = { Text("Посмотреть логи") },
                             onClick = {
@@ -2157,9 +2194,7 @@ fun TaskCard(
 
                     // Иконка раскрытия
                     Icon(
-                        painter = painterResource(
-                            id = if (isExpanded) android.R.drawable.arrow_up_float else android.R.drawable.arrow_down_float
-                        ),
+                        imageVector = if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                         contentDescription = if (isExpanded) "Свернуть" else "Развернуть",
                         modifier = Modifier
                             .size(28.dp) // Увеличиваем иконку
@@ -2480,8 +2515,10 @@ fun TaskCard(
                             contentColor = MaterialTheme.colorScheme.onPrimary // или другой контрастный
                         )
                     ) {
+                        Icon(Icons.Filled.Check, contentDescription = "Завершить", modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "✅ Завершить",
+                            text = "Завершить",
                             fontSize = 16.sp // Увеличиваем шрифт
                         )
                     }

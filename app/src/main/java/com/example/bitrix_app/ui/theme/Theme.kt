@@ -96,6 +96,15 @@ fun Bitrix_appTheme(
         AppThemeOptions.DARK -> DarkColorScheme
         AppThemeOptions.OCEAN -> OceanColorScheme // Наша новая тема "Океан"
         AppThemeOptions.FOREST -> ForestColorScheme // Наша новая тема "Лес"
+        // Добавляем else для исчерпывающего when
+        else -> { // По умолчанию используем системную логику
+            if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val context = LocalContext.current
+                if (darkThemeSystem) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            } else {
+                if (darkThemeSystem) DarkColorScheme else LightColorScheme
+            }
+        }
     }
 
     MaterialTheme(
