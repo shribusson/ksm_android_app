@@ -1312,61 +1312,108 @@ class MainViewModel : ViewModel() {
     }
 
 
-    private suspend fun fetchUserStorageId(user: User): String? = suspendCancellableCoroutine { continuation ->
-        val url = "${user.webhookUrl}disk.storage.getlist?filter[ENTITY_TYPE]=USER&filter[ENTITY_ID]=${user.userId}"
+    private suspend fun fetchUserStorageId(user: User): String? {
+        // Первая попытка: с фильтром по USER и ENTITY_ID
+        val specificUrl = "${user.webhookUrl}disk.storage.getlist?filter[ENTITY_TYPE]=USER&filter[ENTITY_ID]=${user.userId}"
+        Timber.d("Attempt 1: Fetching storage ID for user ${user.userId} with URL: $specificUrl")
+        var storageId = makeStorageRequest(specificUrl, user, true)
+
+        if (storageId != null) {
+            Timber.i("Found storage ID '${storageId}' for user ${user.userId} using specific filter.")
+            return storageId
+        }
+
+        // Вторая попытка: без фильтров, с последующей фильтрацией на клиенте
+        Timber.w("Specific storage filter failed for user ${user.userId}. Attempt 2: Fetching all storages and filtering client-side.")
+        val genericUrl = "${user.webhookUrl}disk.storage.getlist"
+        Timber.d("Attempt 2: Fetching all storages for user ${user.userId} (webhook context) with URL: $genericUrl")
+        storageId = makeStorageRequest(genericUrl, user, false)
+
+        if (storageId != null) {
+            Timber.i("Found storage ID '${storageId}' for user ${user.userId} by filtering all storages.")
+            return storageId
+        }
+
+        Timber.e("Failed to find any suitable storage for user ${user.userId} after two attempts. Ensure the webhook for user ${user.name} (ID: ${user.userId}) has the 'disk' permission scope in Bitrix24 and the user has an accessible storage.")
+        return null
+    }
+
+    private suspend fun makeStorageRequest(url: String, user: User, isSpecificFilter: Boolean): String? = suspendCancellableCoroutine { continuation ->
         val request = Request.Builder().url(url).build()
-        Timber.d("Fetching storage ID for user ${user.userId} with URL: $url")
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                Timber.e(e, "Failed to fetch storage list for user ${user.userId}")
+                Timber.e(e, "Failed to fetch storage list from URL: $url")
                 if (continuation.isActive) continuation.resume(null)
             }
 
             override fun onResponse(call: Call, response: Response) {
                 try {
-                    val responseBody = response.body?.string() // Читаем тело ответа один раз
+                    val responseBody = response.body?.string()
 
                     if (!response.isSuccessful) {
-                        Timber.w("Fetch storage list failed for user ${user.userId}. Code: ${response.code}, Message: ${response.message}, Body: $responseBody")
+                        Timber.w("Fetch storage list from URL $url failed. Code: ${response.code}, Message: ${response.message}, Body: $responseBody")
                         if (continuation.isActive) continuation.resume(null)
                         return
                     }
 
                     if (responseBody == null) {
-                        Timber.w("Fetch storage list response body is null for user ${user.userId}")
+                        Timber.w("Fetch storage list response body is null from URL: $url")
                         if (continuation.isActive) continuation.resume(null)
                         return
                     }
-                    Timber.d("Storage list response for user ${user.userId}: $responseBody")
+                    Timber.d("Storage list response from URL $url: $responseBody")
                     val json = JSONObject(responseBody)
 
-                    // Проверяем наличие логической ошибки в теле успешного ответа
                     if (json.has("error")) {
                         val errorDescription = json.optString("error_description", json.optString("error", "Unknown API error"))
-                        Timber.w("API error in fetch storage list response for user ${user.userId}: $errorDescription. Full response: $responseBody")
+                        Timber.w("API error in fetch storage list response from URL $url: $errorDescription. Full response: $responseBody")
                         if (continuation.isActive) continuation.resume(null)
                         return
                     }
 
-                    val resultArray = json.optJSONArray("result") // Используем optJSONArray для безопасности
+                    val resultArray = json.optJSONArray("result")
                     if (resultArray != null && resultArray.length() > 0) {
-                        // Берем ID первого хранилища пользователя
-                        val storageObject = resultArray.getJSONObject(0)
-                        val storageId = storageObject.optString("ID")
-                        if (storageId.isNotEmpty()) {
-                            Timber.i("Found storage ID '${storageId}' for user ${user.userId}")
-                            if (continuation.isActive) continuation.resume(storageId)
-                            return
+                        if (isSpecificFilter) {
+                            // Если это был специфический запрос, и он вернул результат, берем первый ID
+                            val firstStorageObject = resultArray.getJSONObject(0)
+                            val id = firstStorageObject.optString("ID")
+                            if (id.isNotEmpty()) {
+                                if (continuation.isActive) continuation.resume(id)
+                                return
+                            }
                         } else {
-                            Timber.w("Found storage object for user ${user.userId}, but ID is empty. Response: $responseBody")
+                            // Если это был общий запрос, ищем подходящее хранилище
+                            for (i in 0 until resultArray.length()) {
+                                val storageObject = resultArray.getJSONObject(i)
+                                val entityId = storageObject.optString("ENTITY_ID")
+                                val entityType = storageObject.optString("ENTITY_TYPE")
+                                val id = storageObject.optString("ID")
+
+                                if (id.isNotEmpty() && entityId == user.userId && entityType == "USER") {
+                                    Timber.i("Found matching user storage: ID=$id, ENTITY_ID=$entityId, ENTITY_TYPE=$entityType for user ${user.userId}")
+                                    if (continuation.isActive) continuation.resume(id)
+                                    return
+                                }
+                            }
+                            // Если не нашли точное совпадение, можно попробовать взять первое хранилище типа USER, если оно есть
+                            for (i in 0 until resultArray.length()) {
+                                val storageObject = resultArray.getJSONObject(i)
+                                val entityType = storageObject.optString("ENTITY_TYPE")
+                                val id = storageObject.optString("ID")
+                                if (id.isNotEmpty() && entityType == "USER") {
+                                    Timber.w("Could not find exact user storage for ${user.userId}. Using first available USER storage: ID=$id, ENTITY_TYPE=$entityType")
+                                    if (continuation.isActive) continuation.resume(id)
+                                    return
+                                }
+                            }
                         }
                     }
                     
-                    Timber.w("No suitable storage found or 'result' is not a non-empty array for user ${user.userId}. Response: $responseBody. Ensure the webhook for user ${user.name} (ID: ${user.userId}) has the 'disk' permission scope in Bitrix24.")
+                    Timber.w("No suitable storage found in response from URL $url. Response: $responseBody. Ensure the webhook for user ${user.name} (ID: ${user.userId}) has the 'disk' permission scope in Bitrix24.")
                     if (continuation.isActive) continuation.resume(null)
                 } catch (e: Exception) {
-                    Timber.e(e, "Error parsing storage list response for user ${user.userId}. Raw response might have been logged above. Ensure the webhook for user ${user.name} (ID: ${user.userId}) has the 'disk' permission scope in Bitrix24.")
+                    Timber.e(e, "Error parsing storage list response from URL $url. Raw response might have been logged above. Ensure the webhook for user ${user.name} (ID: ${user.userId}) has the 'disk' permission scope in Bitrix24.")
                     if (continuation.isActive) continuation.resume(null)
                 } finally {
                     response.close()
@@ -1374,7 +1421,7 @@ class MainViewModel : ViewModel() {
             }
         })
         continuation.invokeOnCancellation {
-            Timber.d("fetchUserStorageId coroutine cancelled for user ${user.userId}")
+            Timber.d("makeStorageRequest coroutine cancelled for URL: $url")
         }
     }
 
