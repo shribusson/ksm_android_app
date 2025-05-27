@@ -2534,22 +2534,33 @@ fun TaskCard(
                     elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
                     colors = run {
                         // scheme уже определена выше в TaskCard
-                        val rememberedColors = remember(isTimerRunningForThisTask, isTimerUserPausedForThisTask, isTimerSystemPausedForThisTask, scheme) {
+                        val sError = scheme.error
+                        val sTertiary = scheme.tertiary
+                        val sOnSurface = scheme.onSurface
+                        val sPrimary = scheme.primary
+                        val sOnError = scheme.onError
+                        val sOnTertiary = scheme.onTertiary
+                        val sOnPrimary = scheme.onPrimary
+
+                        val rememberedColors = remember(
+                            isTimerRunningForThisTask, isTimerUserPausedForThisTask, isTimerSystemPausedForThisTask,
+                            sError, sTertiary, sOnSurface, sPrimary, sOnError, sOnTertiary, sOnPrimary
+                        ) {
                             ButtonDefaults.elevatedButtonColors(
                                 containerColor = when {
-                                    isTimerRunningForThisTask -> scheme.error
-                                    isTimerUserPausedForThisTask -> scheme.tertiary
-                                    isTimerSystemPausedForThisTask -> scheme.onSurface.copy(alpha = 0.12f)
-                                    else -> scheme.primary
+                                    isTimerRunningForThisTask -> sError
+                                    isTimerUserPausedForThisTask -> sTertiary
+                                    isTimerSystemPausedForThisTask -> sOnSurface.copy(alpha = 0.12f)
+                                    else -> sPrimary
                                 },
                                 contentColor = when {
-                                    isTimerRunningForThisTask -> scheme.onError
-                                    isTimerUserPausedForThisTask -> scheme.onTertiary
-                                    isTimerSystemPausedForThisTask -> scheme.onSurface.copy(alpha = 0.38f)
-                                    else -> scheme.onPrimary
+                                    isTimerRunningForThisTask -> sOnError
+                                    isTimerUserPausedForThisTask -> sOnTertiary
+                                    isTimerSystemPausedForThisTask -> sOnSurface.copy(alpha = 0.38f)
+                                    else -> sOnPrimary
                                 },
-                                disabledContainerColor = scheme.onSurface.copy(alpha = 0.12f),
-                                disabledContentColor = scheme.onSurface.copy(alpha = 0.38f)
+                                disabledContainerColor = sOnSurface.copy(alpha = 0.12f),
+                                disabledContentColor = sOnSurface.copy(alpha = 0.38f)
                             )
                         }
                         rememberedColors
@@ -2622,8 +2633,10 @@ fun TaskCard(
                             .background(
                                 color = run {
                                     // scheme уже определена выше в TaskCard
-                                    val rememberedColor = remember(isCurrentlyRecordingThisTask, scheme) {
-                                        if (isCurrentlyRecordingThisTask) scheme.errorContainer else scheme.secondaryContainer
+                                    val sErrorContainer = scheme.errorContainer
+                                    val sSecondaryContainer = scheme.secondaryContainer
+                                    val rememberedColor = remember(isCurrentlyRecordingThisTask, sErrorContainer, sSecondaryContainer) {
+                                        if (isCurrentlyRecordingThisTask) sErrorContainer else sSecondaryContainer
                                     }
                                     rememberedColor
                                 },
@@ -2633,11 +2646,13 @@ fun TaskCard(
                         enabled = !viewModel.isRecordingAudio || isCurrentlyRecordingThisTask // Кнопка активна если не идет запись ИЛИ идет запись именно этой задачи
                     ) {
                         // scheme уже определена выше в TaskCard
-                        val iconAndTint = remember(isCurrentlyRecordingThisTask, scheme) {
+                        val sOnErrorContainer = scheme.onErrorContainer
+                        val sOnSecondaryContainer = scheme.onSecondaryContainer
+                        val iconAndTint = remember(isCurrentlyRecordingThisTask, sOnErrorContainer, sOnSecondaryContainer) {
                             if (isCurrentlyRecordingThisTask) {
-                                Triple(Icons.Filled.Stop, "Остановить запись", scheme.onErrorContainer)
+                                Triple(Icons.Filled.Stop, "Остановить запись", sOnErrorContainer)
                             } else {
-                                Triple(Icons.Filled.Mic, "Записать аудиокомментарий", scheme.onSecondaryContainer)
+                                Triple(Icons.Filled.Mic, "Записать аудиокомментарий", sOnSecondaryContainer)
                             }
                         }
                         Icon(
