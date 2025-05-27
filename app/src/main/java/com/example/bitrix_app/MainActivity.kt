@@ -1450,6 +1450,9 @@ class MainViewModel : ViewModel() {
             .add("fileContent[0]", file.name) // Имя файла как первый элемент массива fileContent
             .add("fileContent[1]", fileBase64) // Содержимое файла в Base64 как второй элемент
             .build()
+        // При отправке Base64 MIME-тип в RequestBody не используется напрямую для файла,
+        // но если бы мы отправляли бинарный файл (не Base64), здесь был бы, например, audio/3gpp
+        // val requestBodyForBinaryFile = file.asRequestBody("audio/3gpp".toMediaTypeOrNull())
 
         val request = Request.Builder().url(url).post(formBody).build()
 
