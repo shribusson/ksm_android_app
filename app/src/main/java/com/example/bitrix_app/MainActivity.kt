@@ -18,19 +18,26 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop // Для иконки остановки записи
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import android.Manifest // Для запроса разрешений
+import android.content.pm.PackageManager // Для проверки разрешений
+import android.media.MediaRecorder
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.core.content.ContextCompat // Для проверки разрешений
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.rememberLauncherForActivityResult // Для запроса разрешений
+import androidx.activity.result.contract.ActivityResultContracts // Для запроса разрешений
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -133,6 +140,17 @@ class MainViewModel : ViewModel() {
         private set
     var loadingSubtasksMap by mutableStateOf<Map<String, Boolean>>(emptyMap())
         private set
+
+    // Состояния для записи аудио
+    var currentRecordingTask by mutableStateOf<Task?>(null)
+        private set
+    var isRecordingAudio by mutableStateOf(false)
+        private set
+    var audioProcessingMessage by mutableStateOf<String?>(null)
+        private set
+
+    private var mediaRecorder: MediaRecorder? = null
+    private var audioOutputFile: java.io.File? = null // Используем java.io.File
 
 
     // Вспомогательная функция для получения данных таймера текущего пользователя
@@ -1198,20 +1216,144 @@ class MainViewModel : ViewModel() {
 
     fun getCurrentUser() = users[currentUserIndex]
 
-    fun recordAndAttachAudioComment(task: Task) {
-        // TODO: Реализовать запись аудио и прикрепление к задаче
-        // 1. Запросить разрешение RECORD_AUDIO (уже добавлено в Manifest)
-        // 2. Реализовать UI для старта/остановки записи (можно использовать состояние в ViewModel)
-        // 3. Использовать MediaRecorder для записи аудио в файл.
-        // 4. После записи, отправить файл как комментарий к задаче.
-        //    Это может потребовать метода API Битрикс для загрузки файлов (disk.storage.uploadfile)
-        //    а затем прикрепления файла к комментарию (task.commentitem.add с UF_CRM_TASK = ID файла).
-        Timber.i("recordAndAttachAudioComment called for task ${task.id}. Functionality not yet implemented.")
-        viewModelScope.launch {
-            errorMessage = "Запись аудио для задачи ${task.id} еще не реализована."
-            delay(3000)
-            errorMessage = null
+    fun toggleAudioRecording(task: Task, context: Context) {
+        if (isRecordingAudio) {
+            if (currentRecordingTask?.id == task.id) {
+                stopAudioRecordingAndProcess(context)
+            } else {
+                // Если запись идет для другой задачи, сначала остановим ее (можно без сохранения)
+                Timber.w("Audio recording for task ${currentRecordingTask?.id} was interrupted to record for task ${task.id}")
+                stopAudioRecordingAndProcess(context, discard = true) // Останавливаем и отменяем предыдущую
+                startAudioRecording(task, context) // Начинаем новую
+            }
+        } else {
+            startAudioRecording(task, context)
         }
+    }
+
+    private fun startAudioRecording(task: Task, context: Context) {
+        currentRecordingTask = task
+        val fileName = "audio_comment_${task.id}_${System.currentTimeMillis()}.m4a"
+        audioOutputFile = java.io.File(context.cacheDir, fileName)
+
+        mediaRecorder = MediaRecorder(context).apply { // Для API 31+ нужен контекст
+            setAudioSource(MediaRecorder.AudioSource.MIC)
+            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            setOutputFile(audioOutputFile?.absolutePath)
+            try {
+                prepare()
+                start()
+                isRecordingAudio = true
+                audioProcessingMessage = "Идет запись для '${task.title}'..."
+                Timber.i("Audio recording started for task ${task.id} to file ${audioOutputFile?.absolutePath}")
+            } catch (e: IOException) {
+                Timber.e(e, "MediaRecorder prepare() failed for task ${task.id}")
+                audioProcessingMessage = "Ошибка начала записи: ${e.message}"
+                resetAudioRecordingState()
+            } catch (e: IllegalStateException) {
+                Timber.e(e, "MediaRecorder start() failed for task ${task.id}")
+                audioProcessingMessage = "Ошибка старта записи: ${e.message}"
+                resetAudioRecordingState()
+            }
+        }
+    }
+
+    private fun stopAudioRecordingAndProcess(context: Context, discard: Boolean = false) {
+        if (!isRecordingAudio && mediaRecorder == null) { // Если уже остановлено или не начиналось
+            Timber.d("stopAudioRecordingAndProcess called but no active recording or recorder.")
+            resetAudioRecordingState() // Просто сбрасываем состояние на всякий случай
+            return
+        }
+
+        try {
+            mediaRecorder?.stop()
+        } catch (e: RuntimeException) {
+            // Часто возникает, если stop() вызывается слишком быстро после start() или в неправильном состоянии
+            Timber.w(e, "MediaRecorder stop() failed. May be called too soon or in wrong state.")
+            audioOutputFile?.delete()
+            audioOutputFile = null
+        } finally {
+            mediaRecorder?.release()
+            mediaRecorder = null
+        }
+
+        val recordedFile = audioOutputFile
+        val taskToAttach = currentRecordingTask
+
+        isRecordingAudio = false
+
+        if (discard || recordedFile == null || !recordedFile.exists() || recordedFile.length() == 0L || taskToAttach == null) {
+            audioProcessingMessage = if (discard) "Запись отменена." else "Ошибка: аудиофайл не создан или пуст."
+            Timber.w("Audio recording processing aborted. Discard: $discard, File: ${recordedFile?.path}, Exists: ${recordedFile?.exists()}, Length: ${recordedFile?.length()}, Task: ${taskToAttach?.id}")
+            recordedFile?.delete()
+            resetAudioRecordingState(clearMessageDelay = 3000L)
+            return
+        }
+
+        audioProcessingMessage = "Обработка аудио для '${taskToAttach.title}'..."
+        Timber.i("Audio recording stopped for task ${taskToAttach.id}. File: ${recordedFile.absolutePath}, Size: ${recordedFile.length()} bytes.")
+        uploadAudioAndCreateComment(taskToAttach, recordedFile, context)
+
+        audioOutputFile = null
+    }
+
+
+    private fun uploadAudioAndCreateComment(task: Task, audioFileToUpload: java.io.File, context: Context) {
+        viewModelScope.launch {
+            delay(1000)
+            audioProcessingMessage = "Загрузка '${audioFileToUpload.name}'..."
+            Timber.i("TODO: Implement file upload for ${audioFileToUpload.absolutePath} (${audioFileToUpload.length()} bytes) for task ${task.id}")
+            // --- Начало блока TODO для API Битрикс ---
+            // 1. Загрузить audioFileToUpload с помощью disk.storage.uploadfile
+            //    - Потребуется определить ID хранилища (disk ID).
+            //    - Сформировать MultipartBody запрос.
+            //    - Получить ID загруженного файла из ответа.
+            // 2. Создать комментарий к задаче с помощью task.commentitem.add
+            //    - В тексте комментария использовать BBCode для файла: "[DISK FILE ID=XXX]"
+            // --- Конец блока TODO для API Битрикс ---
+
+            delay(2000)
+            val uploadSuccess = true // Заглушка
+
+            if (uploadSuccess) {
+                audioProcessingMessage = "Аудио для '${task.title}' готово (TODO: прикреплено)."
+                Timber.i("Simulated: Audio file for task ${task.id} uploaded and comment created.")
+                audioFileToUpload.delete()
+            } else {
+                audioProcessingMessage = "Ошибка загрузки аудио для '${task.title}'."
+                Timber.w("Simulated: Failed to upload audio or create comment for task ${task.id}.")
+            }
+            resetAudioRecordingState(clearMessageDelay = 5000L)
+        }
+    }
+
+    fun setAudioPermissionDeniedMessage() {
+        audioProcessingMessage = "Разрешение на запись аудио не предоставлено."
+        viewModelScope.launch {
+            delay(3000)
+            if (audioProcessingMessage == "Разрешение на запись аудио не предоставлено.") {
+                audioProcessingMessage = null
+            }
+        }
+    }
+
+    private fun resetAudioRecordingState(clearMessageDelay: Long? = null) {
+        mediaRecorder?.release()
+        mediaRecorder = null
+        isRecordingAudio = false
+        audioOutputFile?.delete() // Удаляем файл, если он еще существует и не был обработан
+        audioOutputFile = null
+        currentRecordingTask = null
+        if (clearMessageDelay != null) {
+            viewModelScope.launch {
+                delay(clearMessageDelay)
+                audioProcessingMessage = null
+            }
+        } else {
+            audioProcessingMessage = null
+        }
+        Timber.d("Audio recording state reset.")
     }
 }
 
@@ -1454,6 +1596,23 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         }
 
         // Список задач
+        // Сообщение о процессе записи/обработки аудио
+        viewModel.audioProcessingMessage?.let { message ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+            ) {
+                Text(
+                    text = message,
+                    modifier = Modifier.padding(16.dp),
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+
         LazyColumn {
             items(viewModel.tasks) { task ->
                 val timerData = viewModel.getCurrentUserTimerData()
@@ -1912,16 +2071,41 @@ fun TaskCard(
 
                 // Кнопка записи аудиокомментария (только для незавершенных задач)
                 if (!task.isCompleted) {
+                    val context = LocalContext.current
+                    val isCurrentlyRecordingThisTask = viewModel.isRecordingAudio && viewModel.currentRecordingTask?.id == task.id
+
+                    val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.RequestPermission(),
+                        onResult = { isGranted ->
+                            if (isGranted) {
+                                viewModel.toggleAudioRecording(task, context)
+                            } else {
+                                viewModel.setAudioPermissionDeniedMessage() // Используем новый метод
+                            }
+                        }
+                    )
+
                     IconButton(
-                        onClick = { viewModel.recordAndAttachAudioComment(task) },
-                        modifier = Modifier.heightIn(min = 52.dp)
-                            .background(MaterialTheme.colorScheme.secondaryContainer, CircleShape)
-                            .padding(horizontal = 8.dp)
+                        onClick = {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                viewModel.toggleAudioRecording(task, context)
+                            } else {
+                                recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        modifier = Modifier
+                            .heightIn(min = 52.dp)
+                            .background(
+                                if (isCurrentlyRecordingThisTask) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+                                CircleShape
+                            )
+                            .padding(horizontal = 8.dp),
+                        enabled = !viewModel.isRecordingAudio || isCurrentlyRecordingThisTask // Кнопка активна если не идет запись ИЛИ идет запись именно этой задачи
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.Mic,
-                            contentDescription = "Записать аудиокомментарий",
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            imageVector = if (isCurrentlyRecordingThisTask) Icons.Filled.Stop else Icons.Filled.Mic,
+                            contentDescription = if (isCurrentlyRecordingThisTask) "Остановить запись" else "Записать аудиокомментарий",
+                            tint = if (isCurrentlyRecordingThisTask) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                             modifier = Modifier.size(28.dp)
                         )
                     }
