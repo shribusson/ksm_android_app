@@ -1501,12 +1501,14 @@ class MainViewModel : ViewModel() {
 
     private suspend fun addCommentToTask(user: User, taskId: String, uploadedFileId: String): Boolean = suspendCancellableCoroutine { continuation ->
         val url = "${user.webhookUrl}task.commentitem.add"
-        val commentText = "[DISK FILE ID=$uploadedFileId]" // BBCode для файла
-        Timber.d("Adding comment to task $taskId with file ID $uploadedFileId. User: ${user.name}. URL: $url. Comment: $commentText")
+        // val commentText = "[DISK FILE ID=$uploadedFileId]" // Этот BBCode больше не используем как основной способ прикрепления
+        val postMessageText = "Аудиокомментарий к задаче." // Общий текст для сообщения
+        Timber.d("Adding comment to task $taskId with file ID $uploadedFileId (as UF_TASK_WEBDAV_FILES). User: ${user.name}. URL: $url. Message: $postMessageText")
 
         val formBody = FormBody.Builder()
             .add("TASK_ID", taskId)
-            .add("FIELDS[POST_MESSAGE]", commentText)
+            .add("FIELDS[POST_MESSAGE]", postMessageText)
+            .add("FIELDS[UF_TASK_WEBDAV_FILES][0]", uploadedFileId) // Прикрепляем файл через User Field
             .add("FIELDS[AUTHOR_ID]", user.userId)
             .build()
 
