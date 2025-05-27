@@ -1317,12 +1317,14 @@ class MainViewModel : ViewModel() {
 
             override fun onResponse(call: Call, response: Response) {
                 try {
+                    val responseBody = response.body?.string() // Читаем тело ответа один раз
+
                     if (!response.isSuccessful) {
-                        Timber.w("Fetch storage list failed for user ${user.userId}. Code: ${response.code}, Message: ${response.message}")
+                        Timber.w("Fetch storage list failed for user ${user.userId}. Code: ${response.code}, Message: ${response.message}, Body: $responseBody")
                         if (continuation.isActive) continuation.resume(null)
                         return
                     }
-                    val responseBody = response.body?.string()
+
                     if (responseBody == null) {
                         Timber.w("Fetch storage list response body is null for user ${user.userId}")
                         if (continuation.isActive) continuation.resume(null)
@@ -1330,22 +1332,33 @@ class MainViewModel : ViewModel() {
                     }
                     Timber.d("Storage list response for user ${user.userId}: $responseBody")
                     val json = JSONObject(responseBody)
-                    if (json.has("result")) {
-                        val resultArray = json.getJSONArray("result")
-                        if (resultArray.length() > 0) {
-                            // Берем ID первого хранилища пользователя
-                            val storageObject = resultArray.getJSONObject(0)
-                            val storageId = storageObject.optString("ID")
-                            if (storageId.isNotEmpty()) {
-                                if (continuation.isActive) continuation.resume(storageId)
-                                return
-                            }
+
+                    // Проверяем наличие логической ошибки в теле успешного ответа
+                    if (json.has("error")) {
+                        val errorDescription = json.optString("error_description", json.optString("error", "Unknown API error"))
+                        Timber.w("API error in fetch storage list response for user ${user.userId}: $errorDescription. Full response: $responseBody")
+                        if (continuation.isActive) continuation.resume(null)
+                        return
+                    }
+
+                    val resultArray = json.optJSONArray("result") // Используем optJSONArray для безопасности
+                    if (resultArray != null && resultArray.length() > 0) {
+                        // Берем ID первого хранилища пользователя
+                        val storageObject = resultArray.getJSONObject(0)
+                        val storageId = storageObject.optString("ID")
+                        if (storageId.isNotEmpty()) {
+                            Timber.i("Found storage ID '${storageId}' for user ${user.userId}")
+                            if (continuation.isActive) continuation.resume(storageId)
+                            return
+                        } else {
+                            Timber.w("Found storage object for user ${user.userId}, but ID is empty. Response: $responseBody")
                         }
                     }
-                    Timber.w("No suitable storage found or error in response for user ${user.userId}")
+                    
+                    Timber.w("No suitable storage found or 'result' is not a non-empty array for user ${user.userId}. Response: $responseBody")
                     if (continuation.isActive) continuation.resume(null)
                 } catch (e: Exception) {
-                    Timber.e(e, "Error parsing storage list response for user ${user.userId}")
+                    Timber.e(e, "Error parsing storage list response for user ${user.userId}. Raw response might have been logged above.")
                     if (continuation.isActive) continuation.resume(null)
                 } finally {
                     response.close()
