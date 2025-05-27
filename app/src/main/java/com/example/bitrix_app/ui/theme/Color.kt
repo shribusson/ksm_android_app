@@ -42,3 +42,31 @@ val AvatarBackground = Color(0xFF795548) // Коричневый для ават
 val ProgressBarGreen = Color(0xFF66BB6A)
 val ProgressBarOrange = Color(0xFFFFA726)
 val ProgressBarRed = Color(0xFFEF5350)
+
+// Ocean Theme Colors (Light)
+val OceanPrimary = Color(0xFF0077C2) // Глубокий синий
+val OceanSecondary = Color(0xFF80DEEA) // Светло-голубой/Аква
+val OceanTertiary = Color(0xFFF0E68C) // Песочно-бежевый
+val OceanBackground = Color(0xFFE0F7FA) // Очень светлый циан
+val OceanSurface = Color(0xFFFFFFFF)
+val OceanError = Color(0xFFD32F2F)
+val OceanOnPrimary = Color(0xFFFFFFFF)
+val OceanOnSecondary = Color(0xFF000000)
+val OceanOnTertiary = Color(0xFF000000)
+val OceanOnBackground = Color(0xFF000000)
+val OceanOnSurface = Color(0xFF000000)
+val OceanOnError = Color(0xFFFFFFFF)
+
+// Forest Theme Colors (Light)
+val ForestPrimary = Color(0xFF388E3C) // Глубокий зеленый
+val ForestSecondary = Color(0xFFA5D6A7) // Светло-зеленый/Мох
+val ForestTertiary = Color(0xFF795548) // Коричневый
+val ForestBackground = Color(0xFFFFFDE7) // Светло-бежевый/Кремовый
+val ForestSurface = Color(0xFFFFFFFF)
+val ForestError = Color(0xFFD32F2F)
+val ForestOnPrimary = Color(0xFFFFFFFF)
+val ForestOnSecondary = Color(0xFF000000)
+val ForestOnTertiary = Color(0xFFFFFFFF)
+val ForestOnBackground = Color(0xFF000000)
+val ForestOnSurface = Color(0xFF000000)
+val ForestOnError = Color(0xFFFFFFFF)
