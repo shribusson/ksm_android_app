@@ -1784,7 +1784,7 @@ fun LogViewerScreen(
                     )
                 }
             } else {
-                items(logLines) { line ->
+                itemsIndexed(logLines, key = { index, _ -> index }) { _, line ->
                     Text(
                         text = line,
                         fontFamily = FontFamily.Monospace,
@@ -1869,7 +1869,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                 // Кнопка настроек
                 Box {
                     IconButton(
-                        onClick = { isSettingsExpanded = true }
+                        onClick = { isSettingsExpanded = true },
+                        modifier = Modifier.size(48.dp) // Явно задаем размер для области касания
                     ) {
                         Text("⚙️", fontSize = 28.sp) // Увеличиваем иконку настроек
                     }
@@ -2069,7 +2070,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
         }
 
         LazyColumn {
-            items(viewModel.tasks) { task ->
+            items(viewModel.tasks, key = { task -> task.id }) { task ->
                 val timerData = viewModel.getCurrentUserTimerData()
                 val isTaskActive = timerData.activeTimerId == task.id && !timerData.isSystemPaused && !timerData.isPausedForUserAction
                 val isTaskUserPaused = timerData.pausedTaskIdForUserAction == task.id
@@ -2250,7 +2251,8 @@ fun TaskCard(
             // Краткая информация о времени
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top // Выравниваем по верху для консистентности
             ) {
                 Text(
                     text = "Время: ${task.formattedTime}",
@@ -2377,20 +2379,19 @@ fun TaskCard(
                     )
                     Spacer(modifier = Modifier.height(6.dp)) // Увеличиваем отступ
                     checklist.forEach { item ->
+                        val onToggleItem = remember(task.id, item.id, item.isComplete) {
+                            { viewModel.toggleChecklistItemStatus(task.id, item.id, item.isComplete) }
+                        }
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    viewModel.toggleChecklistItemStatus(task.id, item.id, item.isComplete)
-                                }
+                                .clickable { onToggleItem() }
                                 .padding(vertical = 4.dp) // Добавляем вертикальный отступ для лучшего касания
                         ) {
                             Checkbox(
                                 checked = item.isComplete,
-                                onCheckedChange = {
-                                    viewModel.toggleChecklistItemStatus(task.id, item.id, item.isComplete)
-                                },
+                                onCheckedChange = { _ -> onToggleItem() }, // Используем onToggleItem
                                 enabled = true,
                                 colors = CheckboxDefaults.colors(
                                     checkedColor = MaterialTheme.colorScheme.primary,
