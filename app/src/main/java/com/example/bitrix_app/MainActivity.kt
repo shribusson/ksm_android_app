@@ -75,7 +75,8 @@ data class Task(
     val description: String,
     val timeSpent: Int,
     val timeEstimate: Int,
-    val status: String = ""
+    val status: String = "",
+    val changedDate: String? = null // Добавлено поле для даты изменения
     // Поле isTimerRunning удалено, так как состояние таймера управляется в UserTimerData
 ) {
     val progressPercent: Int get() = if (timeEstimate > 0) (timeSpent * 100 / timeEstimate) else 0
@@ -151,6 +152,10 @@ class MainViewModel : ViewModel() {
     // Состояние таймеров для всех пользователей
     private var userTimerDataMap by mutableStateOf<Map<String, UserTimerData>>(emptyMap())
 
+    // Состояние раскрытия карточек задач
+    var expandedTaskIds by mutableStateOf<Set<String>>(emptySet())
+        private set
+
     // Состояния для чек-листов и подзадач
     var checklistsMap by mutableStateOf<Map<String, List<ChecklistItem>>>(emptyMap())
         private set
@@ -193,6 +198,16 @@ class MainViewModel : ViewModel() {
         // Обновление tasks здесь больше не нужно, так как isTimerRunning удалено из Task,
         // а состояние для UI вычисляется на лету из getCurrentUserTimerData().
     }
+
+    fun toggleTaskExpansion(taskId: String) {
+        expandedTaskIds = if (expandedTaskIds.contains(taskId)) {
+            expandedTaskIds - taskId
+        } else {
+            expandedTaskIds + taskId
+        }
+        Timber.d("Toggled expansion for task $taskId. Expanded IDs: $expandedTaskIds")
+    }
+
     var currentTime by mutableStateOf("")
 
     init {
@@ -243,7 +258,8 @@ class MainViewModel : ViewModel() {
                 "&select[]=TIME_SPENT_IN_LOGS" +
                 "&select[]=TIME_ESTIMATE" +
                 "&select[]=STATUS" +
-                "&select[]=RESPONSIBLE_ID"
+                "&select[]=RESPONSIBLE_ID" +
+                "&select[]=CHANGED_DATE" // Добавляем CHANGED_DATE
 
         Timber.d("Loading tasks with URL: $url")
 
@@ -277,63 +293,59 @@ class MainViewModel : ViewModel() {
                                     return@launch
                                 }
 
-                                val tasksList = mutableListOf<Task>()
+                                val newRawTasksList = mutableListOf<Task>()
 
                                 // Обрабатываем результат
                                 if (json.has("result")) {
                                     val result = json.get("result")
-
                                     when (result) {
                                         is JSONObject -> {
-                                            // Если result - объект с tasks
                                             if (result.has("tasks")) {
-                                                val tasksData = result.get("tasks")
-                                                processTasks(tasksData, tasksList)
+                                                processTasks(result.get("tasks"), newRawTasksList)
                                             } else {
-                                                // Если result сам содержит задачи как объект
-                                                processTasks(result, tasksList)
+                                                processTasks(result, newRawTasksList)
                                             }
                                         }
-                                        is JSONArray -> {
-                                            // Если result - массив задач
-                                            processTasks(result, tasksList)
-                                        }
+                                        is JSONArray -> processTasks(result, newRawTasksList)
                                     }
                                 }
 
-                                // Сортируем задачи: активный таймер в начале, затем по завершенности и ID
-                                tasks = tasksList.sortedWith(
-                                    compareBy<Task> { it.id != currentUserDataBeforeLoad.activeTimerId }
+                                val newSortedTasksList = newRawTasksList.sortedWith(
+                                    compareBy<Task> { it.id != currentUserDataBeforeLoad.activeTimerId } // Активная задача текущего пользователя в приоритете
                                         .thenBy { it.isCompleted }
+                                        .thenByDescending { it.changedDate } // Сначала новые по дате изменения
                                         .thenBy { it.id.toIntOrNull() ?: 0 }
                                 )
-                                Timber.i("Loaded ${tasksList.size} tasks for user ${user.name}")
 
-                                // Проверяем, существует ли еще активная задача после загрузки
-                                val activeTaskExists = tasks.any { it.id == currentUserDataBeforeLoad.activeTimerId }
-                                if (currentUserDataBeforeLoad.activeTimerId != null && !activeTaskExists) {
-                                    // Активная задача больше не существует, сбрасываем таймер для этого пользователя
-                                    Timber.i("Active task ${currentUserDataBeforeLoad.activeTimerId} no longer exists. Resetting timer for user ${user.name}.")
-                                    updateCurrentUserTimerData(UserTimerData())
-                                } else {
-                                    // Восстанавливаем isTimerRunning для UI на основе сохраненных данных
-                                    // (Это больше не нужно, так как isTimerRunning убрано из Task)
-                                    // tasks = tasks.map { task ->
-                                    //    task.copy(isTimerRunning = task.id == currentUserDataBeforeLoad.activeTimerId && !currentUserDataBeforeLoad.isPausedForUserAction && !currentUserDataBeforeLoad.isSystemPaused)
-                                    // }
-                                    Timber.d("Active task ${currentUserDataBeforeLoad.activeTimerId} still exists or no active timer was set. Timer state preserved.")
+                                // Логика восстановления/сброса таймера на основе нового списка
+                                var timerDataToUpdate = currentUserDataBeforeLoad
+                                val activeTaskStillExistsInNewList = newSortedTasksList.any { it.id == currentUserDataBeforeLoad.activeTimerId }
+
+                                if (currentUserDataBeforeLoad.activeTimerId != null && !activeTaskStillExistsInNewList) {
+                                    Timber.i("Active task ${currentUserDataBeforeLoad.activeTimerId} no longer exists in fetched list for user ${user.name}. Resetting timer for this user.")
+                                    timerDataToUpdate = UserTimerData()
+                                }
+                                // Если таймер нужно было изменить (например, сбросить), обновляем его
+                                if (timerDataToUpdate != currentUserDataBeforeLoad) {
+                                    updateCurrentUserTimerData(timerDataToUpdate)
                                 }
 
+                                // Сравниваем новый отсортированный список с текущим списком задач
+                                if (!areTaskListsFunctionallyEquivalent(newSortedTasksList, tasks)) {
+                                    Timber.i("Task list for user ${user.name} has changed. Updating UI with ${newSortedTasksList.size} tasks.")
+                                    tasks = newSortedTasksList
+                                } else {
+                                    Timber.i("Task list for user ${user.name} has not changed (${newSortedTasksList.size} tasks). No UI update for tasks list.")
+                                }
 
-                                if (tasksList.isEmpty()) {
+                                if (newRawTasksList.isEmpty()) {
                                     Timber.w("No tasks found for user ${user.name} with primary query. Trying simple query.")
-                                    // Попробуем альтернативный запрос без фильтров
                                     loadTasksSimple()
                                 }
 
                             } catch (e: Exception) {
                                 errorMessage = "Ошибка парсинга: ${e.message}"
-                                Timber.e(e, "Parse error in loadTasks")
+                                Timber.e(e, "Parse error in loadTasks for user ${user.name}")
                             }
                         }
                     } else {
@@ -348,9 +360,10 @@ class MainViewModel : ViewModel() {
     // Простой метод загрузки без фильтров
     private fun loadTasksSimple() {
         val user = users[currentUserIndex]
-        val url = "${user.webhookUrl}tasks.task.list"
+        // Добавляем CHANGED_DATE и в простой запрос
+        val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE"
 
-        Timber.d("Trying simple URL without filters for user ${user.name}: $url")
+        Timber.d("Trying simple URL with basic fields for user ${user.name}: $url")
 
         val request = Request.Builder().url(url).build()
 
@@ -373,35 +386,43 @@ class MainViewModel : ViewModel() {
 
                                 val json = JSONObject(responseText)
                                 if (json.has("result")) {
-                                    val tasksList = mutableListOf<Task>()
+                                    val newRawTasksList = mutableListOf<Task>()
                                     val result = json.get("result")
 
-                                    // Правильно обрабатываем структуру ответа
                                     if (result is JSONObject && result.has("tasks")) {
-                                        val tasksData = result.get("tasks")
-                                        processTasks(tasksData, tasksList)
+                                        processTasks(result.get("tasks"), newRawTasksList)
+                                    } else if (result is JSONArray) { // Если result это массив
+                                        processTasks(result, newRawTasksList)
+                                    } else if (result is JSONObject) { // Если result это объект задач
+                                        processTasks(result, newRawTasksList)
+                                    }
 
-                                        if (tasksList.isNotEmpty()) {
-                                            tasks = tasksList.sortedWith(
-                                                compareBy<Task> { it.id != getCurrentUserTimerData().activeTimerId }
-                                                    .thenBy { it.isCompleted }
-                                                    .thenBy { it.id.toIntOrNull() ?: 0 }
-                                            )
-                                            errorMessage = null
-                                            Timber.i("Successfully loaded ${tasksList.size} tasks from simple method for user ${user.name}")
+
+                                    if (newRawTasksList.isNotEmpty()) {
+                                        val currentUserData = getCurrentUserTimerData()
+                                        val newSortedTasksList = newRawTasksList.sortedWith(
+                                            compareBy<Task> { it.id != currentUserData.activeTimerId }
+                                                .thenBy { it.isCompleted }
+                                                .thenByDescending { it.changedDate }
+                                                .thenBy { it.id.toIntOrNull() ?: 0 }
+                                        )
+
+                                        if (!areTaskListsFunctionallyEquivalent(newSortedTasksList, tasks)) {
+                                            Timber.i("Task list (simple) for user ${user.name} has changed. Updating UI.")
+                                            tasks = newSortedTasksList
                                         } else {
-                                            Timber.w("Simple method yielded no tasks for user ${user.name}. Trying alternative.")
-                                            // Если все еще пусто, пробуем альтернативный
-                                            loadTasksAlternative()
+                                            Timber.i("Task list (simple) for user ${user.name} has not changed. No UI update.")
                                         }
+                                        errorMessage = null // Сбрасываем ошибку, так как что-то загрузили
+                                        Timber.i("Successfully processed ${newRawTasksList.size} tasks from simple method for user ${user.name}")
+
                                     } else {
-                                        Timber.w("Simple method response for user ${user.name} has 'result' but not 'result.tasks' or is not a JSONObject. Trying alternative.")
-                                        // Пробуем альтернативный метод
+                                        Timber.w("Simple method yielded no tasks for user ${user.name}. Trying alternative.")
                                         loadTasksAlternative()
                                     }
                                 } else {
-                                     Timber.w("Simple method response for user ${user.name} does not have 'result'. Trying alternative.")
-                                     loadTasksAlternative()
+                                     Timber.w("Simple method response for user ${user.name} does not have 'result' or tasks. Trying alternative.")
+                                     loadTasksAlternative() // Пробуем альтернативный, если нет result или задач
                                 }
                             } catch (e: Exception) {
                                 Timber.e(e, "Simple parse error for user ${user.name}. Trying alternative.")
@@ -423,9 +444,9 @@ class MainViewModel : ViewModel() {
     private fun loadTasksAlternative() {
         val user = users[currentUserIndex]
         val url = "${user.webhookUrl}tasks.task.list" +
-                "?order[ID]=desc" +
-                "&filter[CREATED_BY]=${user.userId}" // Фильтр по CREATED_BY может быть не тем, что нужно, если задачи назначаются другими.
-                                                    // Возможно, лучше оставить без фильтра или использовать RESPONSIBLE_ID, если предыдущие не сработали.
+                "?order[ID]=desc" + // Оставляем сортировку по ID для альтернативного варианта
+                // "&filter[CREATED_BY]=${user.userId}" + // Убираем фильтр по CREATED_BY, он может быть слишком строгим
+                "&select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE" // Добавляем CHANGED_DATE
 
         Timber.d("Trying alternative URL for user ${user.name}: $url")
 
@@ -449,33 +470,52 @@ class MainViewModel : ViewModel() {
 
                                 val json = JSONObject(responseText)
                                 if (json.has("result")) {
-                                    val tasksList = mutableListOf<Task>()
+                                    val newRawTasksList = mutableListOf<Task>()
                                     val result = json.get("result")
 
-                                    // Правильно обрабатываем структуру ответа
                                     if (result is JSONObject && result.has("tasks")) {
-                                        val tasksData = result.get("tasks")
-                                        processTasks(tasksData, tasksList)
+                                        processTasks(result.get("tasks"), newRawTasksList)
+                                    } else if (result is JSONArray) {
+                                        processTasks(result, newRawTasksList)
+                                    } else if (result is JSONObject) {
+                                        processTasks(result, newRawTasksList)
+                                    }
 
-                                        if (tasksList.isNotEmpty()) {
-                                            tasks = tasksList.sortedWith(
-                                                compareBy<Task> { it.id != getCurrentUserTimerData().activeTimerId }
-                                                    .thenBy { it.isCompleted }
-                                                    .thenBy { it.id.toIntOrNull() ?: 0 }
-                                            )
-                                            errorMessage = null
-                                            Timber.i("Successfully loaded ${tasksList.size} tasks from alternative method for user ${user.name}")
+                                    if (newRawTasksList.isNotEmpty()) {
+                                        val currentUserData = getCurrentUserTimerData()
+                                        val newSortedTasksList = newRawTasksList.sortedWith(
+                                            compareBy<Task> { it.id != currentUserData.activeTimerId }
+                                                .thenBy { it.isCompleted }
+                                                .thenByDescending { it.changedDate }
+                                                .thenBy { it.id.toIntOrNull() ?: 0 }
+                                        )
+
+                                        if (!areTaskListsFunctionallyEquivalent(newSortedTasksList, tasks)) {
+                                            Timber.i("Task list (alternative) for user ${user.name} has changed. Updating UI.")
+                                            tasks = newSortedTasksList
                                         } else {
-                                            Timber.w("Alternative method also yielded no tasks for user ${user.name}.")
+                                            Timber.i("Task list (alternative) for user ${user.name} has not changed. No UI update.")
                                         }
+                                        errorMessage = null
+                                        Timber.i("Successfully processed ${newRawTasksList.size} tasks from alternative method for user ${user.name}")
                                     } else {
-                                         Timber.w("Alternative method response for user ${user.name} has 'result' but not 'result.tasks' or is not a JSONObject.")
+                                        Timber.w("Alternative method also yielded no tasks for user ${user.name}.")
+                                        // Здесь можно установить сообщение, что задачи не найдены, если это последний метод загрузки
+                                        if (tasks.isEmpty()) { // Если текущий список задач тоже пуст
+                                            errorMessage = "Задачи не найдены для пользователя ${user.name}."
+                                        }
                                     }
                                 } else {
-                                    Timber.w("Alternative method response for user ${user.name} does not have 'result'.")
+                                    Timber.w("Alternative method response for user ${user.name} does not have 'result' or tasks.")
+                                    if (tasks.isEmpty()) {
+                                        errorMessage = "Ошибка загрузки задач или задачи отсутствуют для пользователя ${user.name}."
+                                    }
                                 }
                             } catch (e: Exception) {
                                 Timber.e(e, "Alternative parse error for user ${user.name}")
+                                if (tasks.isEmpty()) {
+                                     errorMessage = "Ошибка обработки задач для ${user.name}."
+                                }
                             }
                         }
                     } else {
@@ -518,9 +558,61 @@ class MainViewModel : ViewModel() {
             description = taskJson.optString("description", taskJson.optString("DESCRIPTION", "")),
             timeSpent = timeSpent,
             timeEstimate = taskJson.optInt("timeEstimate", taskJson.optInt("TIME_ESTIMATE", 7200)),
-            status = taskJson.optString("status", taskJson.optString("STATUS", ""))
+            status = taskJson.optString("status", taskJson.optString("STATUS", "")),
+            changedDate = taskJson.optString("changedDate", taskJson.optString("CHANGED_DATE", null))
         )
     }
+
+    // Функция для сравнения списков задач
+    private fun areTaskListsFunctionallyEquivalent(newList: List<Task>, oldList: List<Task>): Boolean {
+        if (newList.size != oldList.size) {
+            Timber.d("Task lists differ in size. New: ${newList.size}, Old: ${oldList.size}")
+            return false
+        }
+
+        // Сравниваем содержимое каждой задачи по ключевым полям
+        // Задачи в обоих списках должны быть отсортированы одинаково перед этим сравнением,
+        // или мы должны использовать Map для сравнения по ID.
+        // Так как мы сортируем newSortedTasksList перед сравнением, и this.tasks также должен быть результатом предыдущей сортировки,
+        // прямое поэлементное сравнение после проверки размеров должно работать, если порядок сортировки стабилен.
+        // Однако, для большей надежности, лучше сравнивать по ID.
+
+        val oldTasksMap = oldList.associateBy { it.id }
+
+        for (newTask in newList) {
+            val oldTask = oldTasksMap[newTask.id]
+            if (oldTask == null) { // Новая задача, которой не было
+                Timber.d("Task lists differ: New task found with ID ${newTask.id}")
+                return false
+            }
+            // Сравниваем ключевые поля. Добавьте другие поля при необходимости.
+            if (newTask.title != oldTask.title ||
+                newTask.status != oldTask.status ||
+                newTask.timeSpent != oldTask.timeSpent ||
+                newTask.timeEstimate != oldTask.timeEstimate ||
+                newTask.changedDate != oldTask.changedDate ||
+                newTask.isCompleted != oldTask.isCompleted // Важно, если статус не покрывает это
+            ) {
+                Timber.d("Task lists differ: Task with ID ${newTask.id} has changed fields.")
+                // Логирование конкретных изменений для отладки:
+                // if (newTask.title != oldTask.title) Timber.v("Task ${newTask.id} title changed: '${oldTask.title}' -> '${newTask.title}'")
+                // if (newTask.status != oldTask.status) Timber.v("Task ${newTask.id} status changed: '${oldTask.status}' -> '${newTask.status}'")
+                // if (newTask.timeSpent != oldTask.timeSpent) Timber.v("Task ${newTask.id} timeSpent changed: ${oldTask.timeSpent} -> ${newTask.timeSpent}")
+                // if (newTask.timeEstimate != oldTask.timeEstimate) Timber.v("Task ${newTask.id} timeEstimate changed: ${oldTask.timeEstimate} -> ${newTask.timeEstimate}")
+                // if (newTask.changedDate != oldTask.changedDate) Timber.v("Task ${newTask.id} changedDate changed: '${oldTask.changedDate}' -> '${newTask.changedDate}'")
+                return false
+            }
+        }
+        // Проверяем, что в старом списке нет задач, которые исчезли из нового (удаление)
+        if (oldList.any { oldTask -> newList.none { newTask -> newTask.id == oldTask.id } }) {
+            Timber.d("Task lists differ: Some tasks were removed.")
+            return false
+        }
+
+
+        return true // Списки идентичны по ключевым полям
+    }
+
 
     fun fetchChecklistForTask(taskId: String) {
         val user = users[currentUserIndex] // Используем текущего пользователя для API вызова
@@ -2164,15 +2256,17 @@ fun TaskCard(
     isTimerSystemPausedForThisTask: Boolean,
     viewModel: MainViewModel // Передаем ViewModel для доступа к данным и функциям
 ) {
-    var isExpanded by remember { mutableStateOf(false) }
+    // Используем состояние из ViewModel для раскрытия карточки
+    val isExpanded = viewModel.expandedTaskIds.contains(task.id)
 
     // Загрузка чек-листов и подзадач при раскрытии карточки
-    LaunchedEffect(task.id, isExpanded) {
+    LaunchedEffect(task.id, isExpanded) { // Ключ теперь isExpanded из ViewModel
         if (isExpanded) {
-            if (viewModel.checklistsMap[task.id] == null && viewModel.loadingChecklistMap[task.id] != true) {
+            // Проверяем, есть ли уже данные или идет ли загрузка, перед тем как запрашивать
+            if (viewModel.checklistsMap[task.id].isNullOrEmpty() && viewModel.loadingChecklistMap[task.id] != true) {
                 viewModel.fetchChecklistForTask(task.id)
             }
-            if (viewModel.subtasksMap[task.id] == null && viewModel.loadingSubtasksMap[task.id] != true) {
+            if (viewModel.subtasksMap[task.id].isNullOrEmpty() && viewModel.loadingSubtasksMap[task.id] != true) {
                 viewModel.fetchSubtasksForTask(task.id)
             }
         }
@@ -2201,7 +2295,7 @@ fun TaskCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { isExpanded = !isExpanded },
+            .clickable { viewModel.toggleTaskExpansion(task.id) }, // Используем метод из ViewModel
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp), // Увеличиваем тень для TaskCard
         colors = CardDefaults.elevatedCardColors(containerColor = cardContainerColor)
     ) {
