@@ -1761,11 +1761,13 @@ class MainActivity : ComponentActivity() {
             Timber.i("MainActivity onCreate: Timber already planted.")
         }
 
-        val viewModel: MainViewModel = viewModel()
-        viewModel.initViewModel(applicationContext) // Инициализируем ViewModel с контекстом
+        // viewModel и его инициализация перенесены внутрь setContent для корректного Composable контекста
 
         setContent {
-            // val viewModel: MainViewModel = viewModel() // viewModel уже инициализирован выше
+            val viewModel: MainViewModel = viewModel()
+            LaunchedEffect(Unit) { // Вызываем initViewModel один раз при первой композиции
+                viewModel.initViewModel(applicationContext)
+            }
 
             // Запрос разрешения на уведомления для Android 13+
             val notificationPermissionLauncher = rememberLauncherForActivityResult(
