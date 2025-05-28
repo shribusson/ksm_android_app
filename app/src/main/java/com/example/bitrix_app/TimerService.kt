@@ -19,12 +19,13 @@ import java.util.Locale
 
 // Состояние таймера, управляемое сервисом
 data class TimerServiceState(
+    val userId: String, // ID пользователя, к которому относится это состояние
+    val userName: String?,   // Имя пользователя для отображения
     val activeTaskId: String? = null,
     val activeTaskTitle: String? = null,
     val timerSeconds: Int = 0,
     val isUserPaused: Boolean = false,
-    val isSystemPaused: Boolean = false,
-    val currentUserName: String? = null
+    val isSystemPaused: Boolean = false
 ) {
     val isEffectivelyPaused: Boolean
         get() = isUserPaused || isSystemPaused
@@ -33,11 +34,19 @@ data class TimerServiceState(
 class TimerService : Service() {
 
     private val binder = LocalBinder()
-    private var timerJob: Job? = null
+    private val userTimerJobs = mutableMapOf<String, Job>() // Job для каждого пользователя
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    private val _serviceStateFlow = MutableStateFlow(TimerServiceState())
-    val serviceStateFlow = _serviceStateFlow.asStateFlow()
+    // Хранит состояния таймеров для всех пользователей (userId -> TimerServiceState)
+    private val _allUserStates = MutableStateFlow<Map<String, TimerServiceState>>(emptyMap())
+
+    // Выдает состояние таймера для текущего активного пользователя в UI
+    private val _currentUserSpecificStateFlow = MutableStateFlow<TimerServiceState?>(null)
+    val serviceStateFlow = _currentUserSpecificStateFlow.asStateFlow() // ViewModel будет подписываться на это
+
+    private var currentUiUserId: String? = null
+    private var currentUiUserName: String? = null
+
 
     inner class LocalBinder : Binder() {
         fun getService(): TimerService = this@TimerService
@@ -72,7 +81,7 @@ class TimerService : Service() {
             }
             ACTION_STOP_FOREGROUND_SERVICE -> {
                 Timber.i("TimerService stopping via intent...")
-                stopTimerJob()
+                stopAllTimerJobs()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
@@ -90,133 +99,214 @@ class TimerService : Service() {
         Timber.d("TimerService onUnbind")
         // Если все клиенты отвязались, можно остановить таймер, если он не должен работать без UI.
         // Но для нашего случая, таймер должен продолжать работать.
-        // stopTimerJob() // Раскомментировать, если таймер должен останавливаться при отвязке всех клиентов
+        // stopAllTimerJobs() // Раскомментировать, если таймер должен останавливаться при отвязке всех клиентов
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         Timber.i("TimerService onDestroy")
-        stopTimerJob()
+        stopAllTimerJobs()
         serviceScope.cancel() // Отменяем все корутины в serviceScope
         super.onDestroy()
     }
 
     // --- Публичные методы для управления из ViewModel через Binder ---
-    fun setCurrentUser(userName: String?) {
-        _serviceStateFlow.value = _serviceStateFlow.value.copy(currentUserName = userName)
+    fun setCurrentUser(userId: String, userName: String?) {
+        this.currentUiUserId = userId
+        this.currentUiUserName = userName
+        _currentUserSpecificStateFlow.value = _allUserStates.value[userId] ?: TimerServiceState(userId = userId, userName = userName)
         updateNotification()
-        Timber.d("Service: User set to $userName")
+        Timber.d("Service: Current UI User set to $userName (ID: $userId)")
     }
 
-    fun startTaskTimer(taskId: String, taskTitle: String) {
-        Timber.i("Service: Starting timer for task '$taskTitle' (ID: $taskId)")
-        // Если уже был активный таймер, его время "сбрасывается" (не сохраняется здесь, это делает ViewModel)
-        _serviceStateFlow.value = _serviceStateFlow.value.copy(
+    fun startTaskTimer(userId: String, userName: String?, taskId: String, taskTitle: String) {
+        Timber.i("Service: Starting timer for task '$taskTitle' (ID: $taskId) for user $userName (ID: $userId)")
+        val newState = TimerServiceState(
+            userId = userId,
+            userName = userName,
             activeTaskId = taskId,
             activeTaskTitle = taskTitle,
             timerSeconds = 0,
             isUserPaused = false,
-            isSystemPaused = false // При старте новой задачи системная пауза тоже снимается
-        )
-        startTimerJob()
-        updateNotification()
-    }
-
-    fun stopTaskTimer(): Int {
-        val currentTime = _serviceStateFlow.value.timerSeconds
-        Timber.i("Service: Stopping timer for task '${_serviceStateFlow.value.activeTaskTitle}'. Final time: $currentTime seconds.")
-        _serviceStateFlow.value = _serviceStateFlow.value.copy(
-            activeTaskId = null,
-            activeTaskTitle = null,
-            // timerSeconds остается для ViewModel, чтобы забрать его
-            isUserPaused = false,
             isSystemPaused = false
         )
-        stopTimerJob()
+        _allUserStates.value = _allUserStates.value + (userId to newState)
+        if (userId == currentUiUserId) {
+            _currentUserSpecificStateFlow.value = newState
+        }
+        startTimerJob(userId)
         updateNotification()
-        return currentTime // Возвращаем время для сохранения в ViewModel
     }
 
-    fun userPauseTaskTimer() {
-        if (_serviceStateFlow.value.activeTaskId != null) {
-            _serviceStateFlow.value = _serviceStateFlow.value.copy(isUserPaused = true)
-            Timber.i("Service: User paused timer for task '${_serviceStateFlow.value.activeTaskTitle}'")
-            updateNotification()
-            // Таймер Job сам остановит инкремент секунд из-за isEffectivelyPaused
+    fun stopTaskTimer(userId: String): Int {
+        val userState = _allUserStates.value[userId] ?: return 0
+        val currentTime = userState.timerSeconds
+        Timber.i("Service: Stopping timer for task '${userState.activeTaskTitle}' for user ${userState.userName}. Final time: $currentTime seconds.")
+        val newState = userState.copy(
+            activeTaskId = null,
+            activeTaskTitle = null,
+            isUserPaused = false,
+            isSystemPaused = false
+            // timerSeconds остается для ViewModel, чтобы забрать его при необходимости (хотя stopTaskTimer возвращает его)
+        )
+        _allUserStates.value = _allUserStates.value + (userId to newState)
+        if (userId == currentUiUserId) {
+            _currentUserSpecificStateFlow.value = newState
         }
+        stopTimerJob(userId)
+        updateNotification()
+        return currentTime
     }
 
-    fun userResumeTaskTimer() {
-        if (_serviceStateFlow.value.activeTaskId != null) {
-            _serviceStateFlow.value = _serviceStateFlow.value.copy(isUserPaused = false)
-            Timber.i("Service: User resumed timer for task '${_serviceStateFlow.value.activeTaskTitle}'")
-            startTimerJob() // Убедимся, что таймер запущен, если он был остановлен
-            updateNotification()
-        }
-    }
-
-    fun systemPauseTaskTimer() {
-        if (_serviceStateFlow.value.activeTaskId != null) {
-            _serviceStateFlow.value = _serviceStateFlow.value.copy(isSystemPaused = true)
-            Timber.i("Service: System paused timer for task '${_serviceStateFlow.value.activeTaskTitle}'")
-            updateNotification()
-        }
-    }
-
-    fun systemResumeTaskTimer() {
-        if (_serviceStateFlow.value.activeTaskId != null) {
-            // Возобновляем системную паузу, только если нет пользовательской паузы
-            if (!_serviceStateFlow.value.isUserPaused) {
-                _serviceStateFlow.value = _serviceStateFlow.value.copy(isSystemPaused = false)
-                Timber.i("Service: System resumed timer for task '${_serviceStateFlow.value.activeTaskTitle}'")
-                startTimerJob()
+    fun userPauseTaskTimer(userId: String) {
+        _allUserStates.value[userId]?.let { currentState ->
+            if (currentState.activeTaskId != null) {
+                val newState = currentState.copy(isUserPaused = true)
+                _allUserStates.value = _allUserStates.value + (userId to newState)
+                if (userId == currentUiUserId) {
+                    _currentUserSpecificStateFlow.value = newState
+                }
+                Timber.i("Service: User paused timer for task '${currentState.activeTaskTitle}' for user ${currentState.userName}")
                 updateNotification()
-            } else {
-                Timber.i("Service: System resume requested, but user pause is active for task '${_serviceStateFlow.value.activeTaskTitle}'. Keeping system pause effectively.")
-                 // Если есть пользовательская пауза, то системную можно снять, но таймер все равно не пойдет.
-                 // Для консистентности isSystemPaused можно установить в false.
-                _serviceStateFlow.value = _serviceStateFlow.value.copy(isSystemPaused = false)
-                updateNotification() // Обновить уведомление, т.к. isSystemPaused изменился
             }
         }
     }
+
+    fun userResumeTaskTimer(userId: String) {
+        _allUserStates.value[userId]?.let { currentState ->
+            if (currentState.activeTaskId != null) {
+                val newState = currentState.copy(isUserPaused = false)
+                _allUserStates.value = _allUserStates.value + (userId to newState)
+                if (userId == currentUiUserId) {
+                    _currentUserSpecificStateFlow.value = newState
+                }
+                Timber.i("Service: User resumed timer for task '${currentState.activeTaskTitle}' for user ${currentState.userName}")
+                startTimerJob(userId) // Убедимся, что таймер запущен
+                updateNotification()
+            }
+        }
+    }
+
+    // Внутренний метод для системной паузы конкретного пользователя
+    private fun systemPauseTaskTimerInternal(userId: String) {
+        _allUserStates.value[userId]?.let { currentState ->
+            if (currentState.activeTaskId != null && !currentState.isSystemPaused) { // Паузим только если не была уже системно на паузе
+                val newState = currentState.copy(isSystemPaused = true)
+                _allUserStates.value = _allUserStates.value + (userId to newState)
+                if (userId == currentUiUserId) {
+                    _currentUserSpecificStateFlow.value = newState
+                }
+                Timber.i("Service: System paused timer for task '${currentState.activeTaskTitle}' for user ${currentState.userName}")
+                if (userId == currentUiUserId) updateNotification() // Обновляем уведомление, если это текущий пользователь
+            }
+        }
+    }
+
+    // Внутренний метод для системного возобновления конкретного пользователя
+    private fun systemResumeTaskTimerInternal(userId: String) {
+        _allUserStates.value[userId]?.let { currentState ->
+            if (currentState.activeTaskId != null && currentState.isSystemPaused) { // Возобновляем только если была системная пауза
+                // Возобновляем системную паузу, только если нет пользовательской паузы
+                if (!currentState.isUserPaused) {
+                    val newState = currentState.copy(isSystemPaused = false)
+                    _allUserStates.value = _allUserStates.value + (userId to newState)
+                    if (userId == currentUiUserId) {
+                        _currentUserSpecificStateFlow.value = newState
+                    }
+                    Timber.i("Service: System resumed timer for task '${currentState.activeTaskTitle}' for user ${currentState.userName}")
+                    startTimerJob(userId)
+                    if (userId == currentUiUserId) updateNotification()
+                } else {
+                    Timber.i("Service: System resume requested for user ${currentState.userName}, but user pause is active. Keeping system pause effectively (marking as not system paused).")
+                    val newState = currentState.copy(isSystemPaused = false) // Снимаем флаг системной паузы
+                     _allUserStates.value = _allUserStates.value + (userId to newState)
+                    if (userId == currentUiUserId) {
+                        _currentUserSpecificStateFlow.value = newState
+                        updateNotification()
+                    }
+                }
+            }
+        }
+    }
+
+    // Публичные методы для глобальной системной паузы/возобновления
+    fun systemPauseAllApplicableTimers() {
+        Timber.i("Service: SystemPauseAllApplicableTimers called.")
+        _allUserStates.value.keys.forEach { userId ->
+            _allUserStates.value[userId]?.let { userState ->
+                if (userState.activeTaskId != null && !userState.isEffectivelyPaused) { // Паузим только активные не на паузе
+                    systemPauseTaskTimerInternal(userId)
+                }
+            }
+        }
+        updateNotification() // Обновить уведомление после всех изменений
+    }
+
+    fun systemResumeAllApplicableTimers() {
+        Timber.i("Service: SystemResumeAllApplicableTimers called.")
+        _allUserStates.value.keys.forEach { userId ->
+             _allUserStates.value[userId]?.let { userState ->
+                if (userState.activeTaskId != null && userState.isSystemPaused && !userState.isUserPaused) { // Возобновляем только те, что были на системной паузе и не на пользовательской
+                    systemResumeTaskTimerInternal(userId)
+                }
+            }
+        }
+        updateNotification() // Обновить уведомление после всех изменений
+    }
+
     // --- Конец публичных методов ---
 
-    private fun startTimerJob() {
-        if (timerJob?.isActive == true) {
-            // Timber.v("Timer job already active.")
+    private fun startTimerJob(userId: String) {
+        if (userTimerJobs[userId]?.isActive == true) {
             return
         }
-        timerJob = serviceScope.launch {
-            Timber.d("Timer job started.")
+        userTimerJobs[userId]?.cancel() // Отменяем предыдущий job для этого пользователя, если есть
+
+        userTimerJobs[userId] = serviceScope.launch {
+            Timber.d("Timer job started for user ID: $userId.")
             try {
-                while (isActive) { // Цикл работает, пока корутина активна
+                while (isActive) {
                     delay(1000)
-                    val currentState = _serviceStateFlow.value
-                    if (currentState.activeTaskId != null && !currentState.isEffectivelyPaused) {
-                        _serviceStateFlow.value = currentState.copy(timerSeconds = currentState.timerSeconds + 1)
-                        // Обновление уведомления здесь может быть слишком частым.
-                        // Лучше обновлять уведомление при изменении состояния (старт/стоп/пауза/смена задачи).
-                        // Но для отображения секунд в уведомлении - нужно. Решим позже, если будет проблема с производительностью.
-                        updateNotification() // Обновляем уведомление с новым временем
-                    } else if (currentState.activeTaskId == null) {
-                        // Если нет активной задачи, останавливаем job, чтобы не тикал впустую
-                        Timber.d("No active task, stopping timer job from within.")
-                        stopTimerJob() // Это остановит внешний while isActive
+                    _allUserStates.value[userId]?.let { currentUserState ->
+                        if (currentUserState.activeTaskId != null && !currentUserState.isEffectivelyPaused) {
+                            val newSeconds = currentUserState.timerSeconds + 1
+                            val updatedUserState = currentUserState.copy(timerSeconds = newSeconds)
+                            _allUserStates.value = _allUserStates.value + (userId to updatedUserState)
+
+                            if (userId == currentUiUserId) {
+                                _currentUserSpecificStateFlow.value = updatedUserState
+                                updateNotification() // Обновляем уведомление, если это текущий пользователь и таймер тикает
+                            }
+                        } else if (currentUserState.activeTaskId == null) {
+                            Timber.d("No active task for user ID: $userId, stopping timer job from within.")
+                            stopTimerJob(userId) // Это остановит внешний while isActive для этого job'a
+                        }
+                    } ?: run {
+                        Timber.w("No state found for user ID: $userId in timer job. Stopping job.")
+                        stopTimerJob(userId)
                     }
                 }
             } catch (e: CancellationException) {
-                Timber.i("Timer job cancelled.")
+                Timber.i("Timer job cancelled for user ID: $userId.")
             } finally {
-                Timber.d("Timer job finished.")
+                Timber.d("Timer job finished for user ID: $userId.")
+                // userTimerJobs.remove(userId) // Можно удалить job из карты после завершения
             }
         }
     }
 
-    private fun stopTimerJob() {
-        timerJob?.cancel()
-        timerJob = null
-        Timber.d("Timer job stopped.")
+    private fun stopTimerJob(userId: String) {
+        userTimerJobs[userId]?.cancel()
+        userTimerJobs.remove(userId)
+        Timber.d("Timer job stopped for user ID: $userId.")
+    }
+
+    private fun stopAllTimerJobs() {
+        Timber.d("Stopping all timer jobs.")
+        userTimerJobs.keys.toList().forEach { userId -> // Копируем ключи, чтобы избежать ConcurrentModificationException
+            stopTimerJob(userId)
+        }
+        userTimerJobs.clear()
     }
 
     private fun updateNotification() {
@@ -250,23 +340,30 @@ class TimerService : Service() {
     }
 
     private fun createNotification(): Notification {
-        val state = _serviceStateFlow.value
+        val uiState = _currentUserSpecificStateFlow.value // Состояние текущего пользователя в UI
         val title: String
         val text: String
 
-        if (state.activeTaskId != null) {
-            val taskTitle = state.activeTaskTitle ?: "Задача"
-            val timeStr = formatTimeForNotification(state.timerSeconds)
-            title = "${state.currentUserName ?: "Таймер"}: $taskTitle"
+        if (uiState != null && uiState.activeTaskId != null) {
+            val taskTitle = uiState.activeTaskTitle ?: "Задача"
+            val timeStr = formatTimeForNotification(uiState.timerSeconds)
+            // Используем userName из состояния конкретного пользователя
+            title = "${uiState.userName ?: "Таймер"}: $taskTitle"
             text = when {
-                state.isSystemPaused && state.isUserPaused -> "Пауза (система и пользователь) - $timeStr"
-                state.isSystemPaused -> "Пауза (система) - $timeStr"
-                state.isUserPaused -> "Пауза (пользователь) - $timeStr"
+                uiState.isSystemPaused && uiState.isUserPaused -> "Пауза (система и пользователь) - $timeStr"
+                uiState.isSystemPaused -> "Пауза (система) - $timeStr"
+                uiState.isUserPaused -> "Пауза (пользователь) - $timeStr"
                 else -> "В работе - $timeStr"
             }
         } else {
-            title = "${state.currentUserName ?: "Bitrix App"} - Таймер"
-            text = "Нет активной задачи"
+            // Если у текущего UI пользователя нет активной задачи, или currentUiUserId не установлен
+            val activeTimersCount = _allUserStates.value.values.count { it.activeTaskId != null && !it.isEffectivelyPaused }
+            title = "${currentUiUserName ?: "Bitrix App"} - Таймер"
+            if (activeTimersCount > 0) {
+                text = "Нет активной задачи для Вас. Всего активных таймеров: $activeTimersCount"
+            } else {
+                text = "Нет активных задач"
+            }
         }
 
         val notificationIntent = Intent(this, MainActivity::class.java)
