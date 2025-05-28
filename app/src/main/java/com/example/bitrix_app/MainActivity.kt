@@ -1829,6 +1829,55 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val viewModel: MainViewModel = viewModel() // viewModel создается здесь
+
+            // Запрос разрешения на уведомления для Android 13+
+            val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestPermission(),
+                onResult = { isGranted ->
+                    if (isGranted) {
+                        Timber.i("Notification permission granted.")
+                        startTimerService()
+                    } else {
+                        Timber.w("Notification permission denied.")
+                        // Можно показать диалог или сообщение пользователю
+                        // Для Foreground Service уведомление обязательно, но если разрешение не дано,
+                        // приложение может упасть на Android 13+ при попытке показать уведомление.
+                        // Однако, система может разрешить показ уведомления для Foreground Service
+                        // даже без явного разрешения, но это поведение может отличаться.
+                        // Лучше всего - убедиться, что сервис запускается после получения разрешения.
+                        // Если разрешение не дано, сервис может не запуститься корректно или упасть.
+                        // Пока просто логируем.
+                        startTimerService() // Пытаемся запустить сервис в любом случае
+                    }
+                }
+            )
+
+            LaunchedEffect(Unit) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // Android 13 (API 33)
+                    if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) ==
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        Timber.d("Notification permission already granted for Android 13+.")
+                        startTimerService()
+                    } else if (shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) {
+                        // Показать объяснение, почему нужно разрешение (если это не первый запрос)
+                        // Здесь можно показать диалог
+                        Timber.d("Showing rationale for notification permission.")
+                        // После показа объяснения, снова запросить
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    else {
+                        Timber.d("Requesting notification permission for Android 13+.")
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                } else {
+                    // Для версий ниже Android 13 разрешение POST_NOTIFICATIONS не требуется явно
+                    Timber.d("No need to request notification permission (SDK < 33).")
+                    startTimerService()
+                }
+            }
+
+
             Bitrix_appTheme(appTheme = viewModel.getCurrentUserTheme()) { // Передаем тему текущего пользователя
                 var showLogScreen by remember { mutableStateOf(false) }
 
@@ -1849,6 +1898,30 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun startTimerService() {
+        Timber.d("Attempting to start TimerService.")
+        val serviceIntent = Intent(this, TimerService::class.java).apply {
+            action = TimerService.ACTION_START_SERVICE
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Можно рассмотреть остановку сервиса здесь, если это требуется по логике приложения,
+        // но обычно Foreground Service продолжает работать, пока его явно не остановят
+        // или пока задача, для которой он был запущен, не будет завершена.
+        // Intent(this, TimerService::class.java).also { intent ->
+        //    intent.action = TimerService.ACTION_STOP_SERVICE
+        //    startService(intent) // или startForegroundService, если нужно
+        // }
+        Timber.i("MainActivity onDestroy")
     }
 }
 
