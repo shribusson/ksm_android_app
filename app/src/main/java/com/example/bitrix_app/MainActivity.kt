@@ -2535,27 +2535,22 @@ fun TaskCard(
                 val sOnTertiaryTimer = scheme.onTertiary
                 val sOnPrimaryTimer = scheme.onPrimary
 
-                val timerButtonColors = remember(
-                    isTimerRunningForThisTask, isTimerUserPausedForThisTask, isTimerSystemPausedForThisTask,
-                    sErrorTimer, sTertiaryTimer, sOnSurfaceTimer, sPrimaryTimer, sOnErrorTimer, sOnTertiaryTimer, sOnPrimaryTimer
-                ) {
-                    ButtonDefaults.elevatedButtonColors(
-                        containerColor = when {
-                            isTimerRunningForThisTask -> sErrorTimer
-                            isTimerUserPausedForThisTask -> sTertiaryTimer
-                            isTimerSystemPausedForThisTask -> sOnSurfaceTimer.copy(alpha = 0.12f)
-                            else -> sPrimaryTimer
-                        },
-                        contentColor = when {
-                            isTimerRunningForThisTask -> sOnErrorTimer
-                            isTimerUserPausedForThisTask -> sOnTertiaryTimer
-                            isTimerSystemPausedForThisTask -> sOnSurfaceTimer.copy(alpha = 0.38f)
-                            else -> sOnPrimaryTimer
-                        },
-                        disabledContainerColor = sOnSurfaceTimer.copy(alpha = 0.12f),
-                        disabledContentColor = sOnSurfaceTimer.copy(alpha = 0.38f)
-                    )
-                }
+                val timerButtonColors = ButtonDefaults.elevatedButtonColors(
+                    containerColor = when {
+                        isTimerRunningForThisTask -> sErrorTimer
+                        isTimerUserPausedForThisTask -> sTertiaryTimer
+                        isTimerSystemPausedForThisTask -> sOnSurfaceTimer.copy(alpha = 0.12f)
+                        else -> sPrimaryTimer
+                    },
+                    contentColor = when {
+                        isTimerRunningForThisTask -> sOnErrorTimer
+                        isTimerUserPausedForThisTask -> sOnTertiaryTimer
+                        isTimerSystemPausedForThisTask -> sOnSurfaceTimer.copy(alpha = 0.38f)
+                        else -> sOnPrimaryTimer
+                    },
+                    disabledContainerColor = sOnSurfaceTimer.copy(alpha = 0.12f),
+                    disabledContentColor = sOnSurfaceTimer.copy(alpha = 0.38f)
+                )
 
                 Button(
                     onClick = { onTimerToggle(task) },
@@ -2578,12 +2573,10 @@ fun TaskCard(
                 // Кнопка завершения (только для незавершенных задач)
                 if (!task.isCompleted) {
                     val sOnPrimaryComplete = scheme.onPrimary // Используем отдельную переменную для ясности ключа
-                    val rememberedCompleteButtonColors = remember(ProgressBarGreen, sOnPrimaryComplete) {
-                        ButtonDefaults.elevatedButtonColors(
-                            containerColor = ProgressBarGreen,
-                            contentColor = sOnPrimaryComplete
-                        )
-                    }
+                    val rememberedCompleteButtonColors = ButtonDefaults.elevatedButtonColors(
+                        containerColor = ProgressBarGreen,
+                        contentColor = sOnPrimaryComplete
+                    )
                     Button(
                         onClick = { onCompleteTask(task) },
                         modifier = Modifier.weight(1f).heightIn(min = 52.dp), // Увеличиваем высоту кнопки
