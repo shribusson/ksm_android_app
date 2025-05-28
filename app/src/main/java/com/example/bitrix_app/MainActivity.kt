@@ -259,6 +259,10 @@ class MainViewModel : ViewModel() {
 
     fun switchUser(index: Int, context: Context) {
         Timber.i("Switching user to index $index: ${users.getOrNull(index)?.name ?: "Unknown"}")
+        isLoading = true // Показываем загрузку немедленно
+        tasks = emptyList() // Очищаем задачи предыдущего пользователя
+        errorMessage = null // Сбрасываем предыдущие ошибки
+
         saveCurrentUserIndex(context, index) // Сохраняем новый индекс
         currentUserIndex = index
         val switchedUser = users[index]
