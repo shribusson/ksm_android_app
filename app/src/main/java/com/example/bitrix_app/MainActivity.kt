@@ -1750,6 +1750,7 @@ class MainViewModel : ViewModel() {
 
 // UI компоненты
 class MainActivity : ComponentActivity() {
+    @Composable
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
