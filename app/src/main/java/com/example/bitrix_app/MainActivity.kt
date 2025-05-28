@@ -2578,7 +2578,7 @@ fun TaskCard(
                 // Кнопка завершения (только для незавершенных задач)
                 if (!task.isCompleted) {
                     val sOnPrimaryComplete = scheme.onPrimary // Используем отдельную переменную для ясности ключа
-                    val completeButtonColors = remember(ProgressBarGreen, sOnPrimaryComplete) {
+                    val rememberedCompleteButtonColors = remember(ProgressBarGreen, sOnPrimaryComplete) {
                         ButtonDefaults.elevatedButtonColors(
                             containerColor = ProgressBarGreen,
                             contentColor = sOnPrimaryComplete
@@ -2588,7 +2588,7 @@ fun TaskCard(
                         onClick = { onCompleteTask(task) },
                         modifier = Modifier.weight(1f).heightIn(min = 52.dp), // Увеличиваем высоту кнопки
                         elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
-                        colors = completeButtonColors
+                        colors = rememberedCompleteButtonColors
                     ) {
                         Icon(Icons.Filled.Check, contentDescription = "Завершить", modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(4.dp))
