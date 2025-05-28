@@ -1082,13 +1082,20 @@ class MainViewModel : ViewModel() {
 
         val previousGlobalStatus = workStatus // Глобальный предыдущий статус
 
-        val newGlobalWorkStatus = when { // Новый глобальный статус
-            currentMinutes < 7 * 60 + 50 -> WorkStatus.BEFORE_WORK // До 07:50
-            currentMinutes in (9 * 60 + 45)..(10 * 60 + 0) -> WorkStatus.BREAK // 09:45 - 10:00
-            currentMinutes in (12 * 60 + 0)..(12 * 60 + 48) -> WorkStatus.LUNCH // 12:00 - 12:48
-            currentMinutes in (14 * 60 + 45)..(15 * 60 + 0) -> WorkStatus.BREAK // 14:45 - 15:00
-            currentMinutes >= 17 * 60 + 0 -> WorkStatus.AFTER_WORK // После 17:00
-            else -> WorkStatus.WORKING
+        // Новое расписание:
+        // Начало работы: 08:00 (480 минут)
+        // Перерыв 1: 09:45 - 10:00 (585 до 599)
+        // Обед:     12:00 - 12:50 (720 до 769)
+        // Перерыв 2: 14:45 - 15:00 (885 до 899)
+        // Конец работы: 17:00 (1020 минут)
+        val newGlobalWorkStatus = when {
+            currentMinutes < 8 * 60 -> WorkStatus.BEFORE_WORK                                  // До 08:00
+            currentMinutes in (9 * 60 + 45) until (10 * 60) -> WorkStatus.BREAK              // 09:45 - 09:59
+            currentMinutes in (12 * 60) until (12 * 60 + 50) -> WorkStatus.LUNCH             // 12:00 - 12:49
+            currentMinutes in (14 * 60 + 45) until (15 * 60) -> WorkStatus.BREAK             // 14:45 - 14:59
+            currentMinutes >= 17 * 60 -> WorkStatus.AFTER_WORK                                 // С 17:00
+            currentMinutes >= 8 * 60 && currentMinutes < 17*60 -> WorkStatus.WORKING // Рабочее время между 08:00 и 17:00, исключая перерывы
+            else -> WorkStatus.WORKING // По умолчанию рабочее, если не попало в другие условия (например, точно 08:00)
         }
 
         if (previousGlobalStatus != newGlobalWorkStatus) {
