@@ -2527,33 +2527,33 @@ fun TaskCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp) // Немного уменьшим расстояние, если добавляем кнопку
             ) {
                 // Кнопка таймера
-                val sError = scheme.error
-                val sTertiary = scheme.tertiary
-                val sOnSurface = scheme.onSurface
-                val sPrimary = scheme.primary
-                val sOnError = scheme.onError
-                val sOnTertiary = scheme.onTertiary
-                val sOnPrimary = scheme.onPrimary
+                val sErrorTimer = scheme.error // Переименовано для ясности
+                val sTertiaryTimer = scheme.tertiary
+                val sOnSurfaceTimer = scheme.onSurface
+                val sPrimaryTimer = scheme.primary
+                val sOnErrorTimer = scheme.onError
+                val sOnTertiaryTimer = scheme.onTertiary
+                val sOnPrimaryTimer = scheme.onPrimary
 
                 val timerButtonColors = remember(
                     isTimerRunningForThisTask, isTimerUserPausedForThisTask, isTimerSystemPausedForThisTask,
-                    sError, sTertiary, sOnSurface, sPrimary, sOnError, sOnTertiary, sOnPrimary
+                    sErrorTimer, sTertiaryTimer, sOnSurfaceTimer, sPrimaryTimer, sOnErrorTimer, sOnTertiaryTimer, sOnPrimaryTimer
                 ) {
                     ButtonDefaults.elevatedButtonColors(
                         containerColor = when {
-                            isTimerRunningForThisTask -> sError
-                            isTimerUserPausedForThisTask -> sTertiary
-                            isTimerSystemPausedForThisTask -> sOnSurface.copy(alpha = 0.12f)
-                            else -> sPrimary
+                            isTimerRunningForThisTask -> sErrorTimer
+                            isTimerUserPausedForThisTask -> sTertiaryTimer
+                            isTimerSystemPausedForThisTask -> sOnSurfaceTimer.copy(alpha = 0.12f)
+                            else -> sPrimaryTimer
                         },
                         contentColor = when {
-                            isTimerRunningForThisTask -> sOnError
-                            isTimerUserPausedForThisTask -> sOnTertiary
-                            isTimerSystemPausedForThisTask -> sOnSurface.copy(alpha = 0.38f)
-                            else -> sOnPrimary
+                            isTimerRunningForThisTask -> sOnErrorTimer
+                            isTimerUserPausedForThisTask -> sOnTertiaryTimer
+                            isTimerSystemPausedForThisTask -> sOnSurfaceTimer.copy(alpha = 0.38f)
+                            else -> sOnPrimaryTimer
                         },
-                        disabledContainerColor = sOnSurface.copy(alpha = 0.12f),
-                        disabledContentColor = sOnSurface.copy(alpha = 0.38f)
+                        disabledContainerColor = sOnSurfaceTimer.copy(alpha = 0.12f),
+                        disabledContentColor = sOnSurfaceTimer.copy(alpha = 0.38f)
                     )
                 }
 
