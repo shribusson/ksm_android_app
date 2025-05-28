@@ -200,7 +200,7 @@ class MainViewModel : ViewModel() {
     }
     // --- Конец SharedPreferences ---
 
-    fun setTimerService(service: TimerService?) {
+    fun connectToTimerService(service: TimerService?) {
         timerService = service
         if (service != null) {
             // Подписываемся на обновления состояния от сервиса
@@ -1820,12 +1820,12 @@ class MainActivity : ComponentActivity() {
                 object : ServiceConnection {
                     override fun onServiceConnected(name: ComponentName?, serviceBinder: IBinder?) {
                         val binder = serviceBinder as? TimerService.LocalBinder
-                        viewModel.setTimerService(binder?.getService())
+                        viewModel.connectToTimerService(binder?.getService())
                         Timber.i("TimerService connected to MainActivity/ViewModel.")
                     }
 
                     override fun onServiceDisconnected(name: ComponentName?) {
-                        viewModel.setTimerService(null)
+                        viewModel.connectToTimerService(null)
                         Timber.w("TimerService disconnected from MainActivity/ViewModel.")
                     }
                 }
@@ -1841,7 +1841,7 @@ class MainActivity : ComponentActivity() {
                     Timber.d("MainActivity DisposableEffect: Unbinding from TimerService.")
                     try {
                          unbindService(serviceConnection)
-                         viewModel.setTimerService(null) // Явно обнуляем ссылку на сервис
+                         viewModel.connectToTimerService(null) // Явно обнуляем ссылку на сервис
                     } catch (e: IllegalArgumentException) {
                         Timber.w(e, "Error unbinding service. Already unbound or not bound?")
                     }
