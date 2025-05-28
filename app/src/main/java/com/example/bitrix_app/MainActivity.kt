@@ -207,7 +207,7 @@ class MainViewModel : ViewModel() {
             viewModelScope.launch {
                 service.serviceStateFlow.collect { newState ->
                     timerServiceState = newState
-                    Timber.v("ViewModel observed new TimerServiceState: $newState")
+                    // Timber.v("ViewModel observed new TimerServiceState: $newState") // Закомментировано для уменьшения логов
                 }
             }
             // Сообщаем сервису текущего пользователя
