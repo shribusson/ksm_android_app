@@ -342,7 +342,7 @@ class MainViewModel : ViewModel() {
                                 }
 
                                 val newSortedTasksList = newRawTasksList.sortedWith(
-                                    compareBy<Task> { it.id != currentUserDataBeforeLoad.activeTimerId } // Активная задача текущего пользователя в приоритете
+                                    compareBy<Task> { it.id != timerServiceState.activeTaskId } // Используем ID из timerServiceState
                                         .thenBy { it.isCompleted }
                                         .thenByDescending { it.changedDate } // Сначала новые по дате изменения
                                         .thenBy { it.id.toIntOrNull() ?: 0 }
@@ -1010,46 +1010,6 @@ class MainViewModel : ViewModel() {
         })
     }
 
-    // Приостановка таймеров ЗАДАЧ для ВСЕХ пользователей из-за системных событий
-    private fun systemPauseAllTaskTimers() {
-        Timber.i("System pausing task timers for ALL users.")
-        val newMap = userTimerDataMap.toMutableMap()
-        var changed = false
-        users.forEach { user ->
-            val userData = userTimerDataMap[user.userId] ?: UserTimerData()
-            if (userData.activeTimerId != null && !userData.isSystemPaused) {
-                newMap[user.userId] = userData.copy(isSystemPaused = true)
-                changed = true
-                // Комментарий здесь не отправляем, т.к. tasks относится к текущему пользователю,
-                // а функция глобальная. Логирование остается.
-                Timber.i("Task timer system-paused for task ${userData.activeTimerId} for user ${user.name} with ${userData.timerSeconds}s")
-            }
-        }
-        if (changed) {
-            userTimerDataMap = newMap.toMap()
-        }
-    }
-
-    // Возобновление таймеров ЗАДАЧ для ВСЕХ пользователей после системных событий
-    private fun systemResumeAllTaskTimers() {
-        Timber.i("System resuming task timers for ALL users.")
-        val newMap = userTimerDataMap.toMutableMap()
-        var changed = false
-        users.forEach { user ->
-            val userData = userTimerDataMap[user.userId] ?: UserTimerData()
-            if (userData.activeTimerId != null && userData.isSystemPaused) {
-                newMap[user.userId] = userData.copy(isSystemPaused = false)
-                changed = true
-                // Комментарий здесь не отправляем.
-                Timber.i("Task timer system-resumed for task ${userData.activeTimerId} for user ${user.name} with ${userData.timerSeconds}s")
-            }
-        }
-        if (changed) {
-            userTimerDataMap = newMap.toMap()
-        }
-    }
-
-
     // Форматирование времени для отображения
     fun formatTime(seconds: Int): String {
         val hours = seconds / 3600
@@ -1302,15 +1262,10 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             while (true) {
                 delay(300000) // каждые 5 минут
-                // Состояние таймера теперь хранится в userTimerDataMap и будет сохранено при loadTasks
-                val currentUserId = users[currentUserIndex].userId
-                val timerDataBeforeReload = userTimerDataMap[currentUserId]
-
-                loadTasks() // loadTasks теперь сам обрабатывает сохранение/восстановление состояния таймера для текущего пользователя
-
-                // Если после loadTasks таймер для текущего пользователя был сброшен (например, задача исчезла),
-                // а до этого он был активен, то это уже обработано в loadTasks.
-                // Если таймер был активен и задача осталась, его состояние в userTimerDataMap сохранится.
+                // Состояние таймера теперь управляется TimerService.
+                // loadTasks() уже содержит логику для остановки таймера в сервисе,
+                // если активная задача больше не существует в загруженном списке.
+                loadTasks()
             }
         }
     }
