@@ -2605,10 +2605,8 @@ fun TaskCard(
                     val isCurrentlyRecordingThisTask = viewModel.isRecordingAudio && viewModel.currentRecordingTask?.id == task.id
 
                     // scheme определена выше в TaskCard
-                    val sErrorContainer = scheme.errorContainer
-                    val sSecondaryContainer = scheme.secondaryContainer
-                    val iconButtonBackgroundColor = remember(isCurrentlyRecordingThisTask, sErrorContainer, sSecondaryContainer) {
-                        if (isCurrentlyRecordingThisTask) sErrorContainer else sSecondaryContainer
+                    val iconButtonBackgroundColor = remember(isCurrentlyRecordingThisTask, scheme) {
+                        if (isCurrentlyRecordingThisTask) scheme.errorContainer else scheme.secondaryContainer
                     }
 
                     val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
@@ -2641,13 +2639,11 @@ fun TaskCard(
                         enabled = !viewModel.isRecordingAudio || isCurrentlyRecordingThisTask // Кнопка активна если не идет запись ИЛИ идет запись именно этой задачи
                     ) {
                         // scheme уже определена выше в TaskCard
-                        val sOnErrorContainer = scheme.onErrorContainer
-                        val sOnSecondaryContainer = scheme.onSecondaryContainer
-                        val iconAndTint = remember(isCurrentlyRecordingThisTask, sOnErrorContainer, sOnSecondaryContainer) {
+                        val iconAndTint = remember(isCurrentlyRecordingThisTask, scheme) {
                             if (isCurrentlyRecordingThisTask) {
-                                Triple(Icons.Filled.Stop, "Остановить запись", sOnErrorContainer)
+                                Triple(Icons.Filled.Stop, "Остановить запись", scheme.onErrorContainer)
                             } else {
-                                Triple(Icons.Filled.Mic, "Записать аудиокомментарий", sOnSecondaryContainer)
+                                Triple(Icons.Filled.Mic, "Записать аудиокомментарий", scheme.onSecondaryContainer)
                             }
                         }
                         Icon(
