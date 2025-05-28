@@ -2604,6 +2604,13 @@ fun TaskCard(
                     val context = LocalContext.current
                     val isCurrentlyRecordingThisTask = viewModel.isRecordingAudio && viewModel.currentRecordingTask?.id == task.id
 
+                    // scheme определена выше в TaskCard
+                    val sErrorContainer = scheme.errorContainer
+                    val sSecondaryContainer = scheme.secondaryContainer
+                    val iconButtonBackgroundColor = remember(isCurrentlyRecordingThisTask, sErrorContainer, sSecondaryContainer) {
+                        if (isCurrentlyRecordingThisTask) sErrorContainer else sSecondaryContainer
+                    }
+
                     val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
                         contract = ActivityResultContracts.RequestPermission(),
                         onResult = { isGranted ->
@@ -2627,15 +2634,7 @@ fun TaskCard(
                             .heightIn(min = 52.dp)
                             .shadow(elevation = 2.dp, shape = CircleShape) // Тень для IconButton
                             .background(
-                                color = run {
-                                    // scheme уже определена выше в TaskCard
-                                    val sErrorContainer = scheme.errorContainer
-                                    val sSecondaryContainer = scheme.secondaryContainer
-                                    val rememberedColor = remember(isCurrentlyRecordingThisTask, sErrorContainer, sSecondaryContainer) {
-                                        if (isCurrentlyRecordingThisTask) sErrorContainer else sSecondaryContainer
-                                    }
-                                    rememberedColor
-                                },
+                                color = iconButtonBackgroundColor,
                                 shape = CircleShape
                             )
                             .padding(horizontal = 8.dp),
