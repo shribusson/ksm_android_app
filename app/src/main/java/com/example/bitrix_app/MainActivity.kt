@@ -347,17 +347,8 @@ class MainViewModel : ViewModel() {
                                         .thenByDescending { it.changedDate } // Сначала новые по дате изменения
                                         .thenBy { it.id.toIntOrNull() ?: 0 }
                                 )
-                                // Логика сброса таймера, если активная задача исчезла
-                                val currentServiceState = timerServiceState // Используем состояние из сервиса
-                                if (currentServiceState.activeTaskId != null && newSortedTasksList.none { it.id == currentServiceState.activeTaskId }) {
-                                    Timber.i("Active task ${currentServiceState.activeTaskId} (from service) no longer exists in fetched list for user ${user.name}. Stopping timer in service.")
-                                    timerService?.stopTaskTimer() // Останавливаем таймер в сервисе
-                                    // Время уже будет в currentServiceState.timerSeconds, если нужно его сохранить,
-                                    // ViewModel должен был это сделать перед/после вызова stopTaskTimer.
-                                    // Но stopTimerAndSaveTime обычно вызывается по действию пользователя.
-                                    // Здесь просто останавливаем, чтобы не было "фантомного" таймера.
-                                }
-
+                                // Логика остановки таймера, если активная задача не принадлежит текущему пользователю, удалена,
+                                // чтобы таймер продолжал работать при смене пользователя.
 
                                 // Сравниваем новый отсортированный список с текущим списком задач
                                 if (!areTaskListsFunctionallyEquivalent(newSortedTasksList, tasks)) {
@@ -436,6 +427,7 @@ class MainViewModel : ViewModel() {
                                                 .thenByDescending { it.changedDate }
                                                 .thenBy { it.id.toIntOrNull() ?: 0 }
                                         )
+                                        // Логика остановки таймера, если активная задача не принадлежит текущему пользователю, удалена.
 
                                         if (!areTaskListsFunctionallyEquivalent(newSortedTasksList, tasks)) {
                                             Timber.i("Task list (simple) for user ${user.name} has changed. Updating UI.")
@@ -520,6 +512,7 @@ class MainViewModel : ViewModel() {
                                                 .thenByDescending { it.changedDate }
                                                 .thenBy { it.id.toIntOrNull() ?: 0 }
                                         )
+                                        // Логика остановки таймера, если активная задача не принадлежит текущему пользователю, удалена.
 
                                         if (!areTaskListsFunctionallyEquivalent(newSortedTasksList, tasks)) {
                                             Timber.i("Task list (alternative) for user ${user.name} has changed. Updating UI.")
