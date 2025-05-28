@@ -2404,35 +2404,7 @@ fun TaskCard(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                // scheme уже определена выше в TaskCard
-                val statusTextColor = remember(task.isCompleted, task.isInProgress, task.isPending, scheme, StatusOrange) {
-                    when {
-                        task.isCompleted -> scheme.tertiary
-                        task.isInProgress -> scheme.primary
-                        task.isPending -> StatusOrange
-                        else -> scheme.onSurfaceVariant
-                    }
-                }
-                val statusTextBackgroundColor = remember(task.isCompleted, task.isInProgress, task.isPending, scheme, StatusOrange) {
-                    when {
-                        task.isCompleted -> scheme.tertiaryContainer.copy(alpha = 0.3f)
-                        task.isInProgress -> scheme.primaryContainer.copy(alpha = 0.3f)
-                        task.isPending -> StatusOrange.copy(alpha = 0.3f)
-                        else -> scheme.secondaryContainer.copy(alpha = 0.3f)
-                    }
-                }
-
-                Text(
-                    text = task.statusText,
-                    fontSize = 14.sp, // Увеличиваем шрифт
-                    color = statusTextColor,
-                    modifier = Modifier
-                        .background(
-                            statusTextBackgroundColor,
-                            CircleShape
-                        )
-                        .padding(horizontal = 10.dp, vertical = 5.dp) // Увеличиваем отступы
-                )
+                // Отображение статуса задачи удалено
             }
 
             // Краткая информация (всегда видна)
@@ -2588,10 +2560,8 @@ fun TaskCard(
 
                 // Чек-листы
                 val checklist = viewModel.checklistsMap[task.id]
-                val isLoadingChecklist = viewModel.loadingChecklistMap[task.id] == true
-                if (isLoadingChecklist) {
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                } else if (!checklist.isNullOrEmpty() && checklist.any { !it.isComplete }) { // Скрываем, если все пункты выполнены
+                // val isLoadingChecklist = viewModel.loadingChecklistMap[task.id] == true // Удалено
+                if (!checklist.isNullOrEmpty() && checklist.any { !it.isComplete }) { // Скрываем, если все пункты выполнены
                     Text(
                         text = "Чек-лист:",
                         fontSize = 16.sp, // Увеличиваем шрифт
@@ -2635,10 +2605,8 @@ fun TaskCard(
 
                 // Подзадачи
                 val subtasks = viewModel.subtasksMap[task.id]
-                val isLoadingSubtasks = viewModel.loadingSubtasksMap[task.id] == true
-                if (isLoadingSubtasks) {
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                } else if (!subtasks.isNullOrEmpty()) {
+                // val isLoadingSubtasks = viewModel.loadingSubtasksMap[task.id] == true // Удалено
+                if (!subtasks.isNullOrEmpty()) {
                     Text(
                         text = "Подзадачи:",
                         fontSize = 16.sp, // Увеличиваем шрифт
@@ -2766,8 +2734,8 @@ fun TaskCard(
                     }
                 }
 
-                // Кнопка записи аудиокомментария (только для незавершенных задач)
-                if (!task.isCompleted) {
+                // Кнопка записи аудиокомментария (теперь доступна и для завершенных задач)
+                // if (!task.isCompleted) { // Условие удалено
                     val context = LocalContext.current
                     val isCurrentlyRecordingThisTask = viewModel.isRecordingAudio && viewModel.currentRecordingTask?.id == task.id
 
@@ -2824,7 +2792,7 @@ fun TaskCard(
                             modifier = Modifier.size(28.dp)
                         )
                     }
-                }
+                // } // Закрывающая скобка от if (!task.isCompleted) удалена
             }
         }
     }
