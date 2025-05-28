@@ -1975,8 +1975,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                     onClick = { isUserMenuExpanded = true },
                     modifier = Modifier.size(60.dp) // Увеличиваем размер кнопки аватара
                 ) {
-                    val currentUser = viewModel.getCurrentUser()
-                    UserAvatar(user = currentUser, size = 60) // Увеличиваем аватар
+                    // val currentUser = viewModel.getCurrentUser() // viewModel.getCurrentUser() уже @Composable
+                    // UserAvatar(user = currentUser, size = 60) // Увеличиваем аватар
+                    // Вынесем UserAvatar в отдельный Composable для ясности, если проблема в этом
+                    RenderUserAvatar(viewModel = viewModel, size = 60)
                 }
 
                 DropdownMenu(
@@ -2205,6 +2207,12 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun RenderUserAvatar(viewModel: MainViewModel, size: Int) {
+    val currentUser = viewModel.getCurrentUser()
+    UserAvatar(user = currentUser, size = size)
 }
 
 @Composable
