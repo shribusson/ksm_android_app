@@ -2018,7 +2018,7 @@ fun LogViewerScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) { // Добавлен параметр onShowLogs
-    var isUserMenuExpanded by remember { mutableStateOf(false) }
+    // var isUserMenuExpanded by remember { mutableStateOf(false) } // Больше не нужно
     var isSettingsExpanded by remember { mutableStateOf(false) }
     val context = LocalContext.current // Получаем контекст здесь, в Composable области
 
@@ -2033,44 +2033,38 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Выпадающее меню пользователей
-            Box {
-                IconButton(
-                    onClick = { isUserMenuExpanded = true },
-                    modifier = Modifier.size(60.dp) // Увеличиваем размер кнопки аватара
-                ) {
-                    val currentUser = viewModel.getCurrentUser() // Вызываем здесь
-                    RenderUserAvatar(user = currentUser, size = 60) // Передаем объект User
-                }
-
-                DropdownMenu(
-                    expanded = isUserMenuExpanded,
-                    onDismissRequest = { isUserMenuExpanded = false }
-                ) {
-                    viewModel.users.forEachIndexed { index, user ->
-                        DropdownMenuItem(
-                            text = {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (index == viewModel.currentUserIndex) {
-                                        Text("✓ ", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                                    } else {
-                                        Text("   ")
-                                    }
-                                    Text(user.name)
+            // Ряд с иконками пользователей
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp) // Пространство между аватарами
+            ) {
+                viewModel.users.forEachIndexed { index, user ->
+                    val isSelected = index == viewModel.currentUserIndex
+                    val avatarSize = if (isSelected) 56 else 48 // Размер активного аватара больше
+                    val elevation = if (isSelected) 6.dp else 2.dp // Тень для активного аватара
+                    Box(
+                        modifier = Modifier
+                            .size(avatarSize.dp)
+                            .shadow(elevation = elevation, shape = CircleShape, clip = false) // Тень применяется к Box
+                            .clip(CircleShape) // Обрезка для UserAvatar, если он сам не обрезает
+                            .clickable {
+                                if (!isSelected) { // Переключаем пользователя только если он не выбран
+                                    viewModel.switchUser(index, context)
                                 }
-                            },
-                            onClick = {
-                                viewModel.switchUser(index, context) // Передаем контекст для SharedPreferences
-                                isUserMenuExpanded = false
                             }
-                        )
+                            .padding(if (isSelected) 2.dp else 0.dp) // Небольшой отступ для "рамки" у выбранного
+                            .background(
+                                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f) else Color.Transparent,
+                                CircleShape
+                            )
+
+                    ) {
+                        UserAvatar(user = user, size = avatarSize - (if (isSelected) 4 else 0)) // Уменьшаем размер аватара для рамки
                     }
                 }
             }
 
-            // Текущее время в центре
+            // Текущее время в центре (может потребоваться调整布局, если аватары занимают много места)
             Text(
                 text = viewModel.currentTime,
                 fontSize = 32.sp, // Увеличиваем шрифт времени
