@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause // Для иконки паузы
 import androidx.compose.material.icons.filled.PlayArrow // Для иконки старт/продолжить
 import androidx.compose.material.icons.filled.Refresh // Для кнопки "Обновить"
+import androidx.compose.material.icons.filled.Save // Для иконки сохранения (дискета)
 import androidx.compose.material.icons.filled.Stop // Для иконки остановки записи
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -2299,62 +2300,76 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
 
         val serviceState = viewModel.timerServiceState // Получаем состояние из ViewModel (TimerServiceState?)
 
-        // Активный таймер (если есть)
-        if (serviceState?.activeTaskId != null) { // Проверяем на null
+        // Активный таймер (если есть) - переделан в одну строку
+        if (serviceState?.activeTaskId != null) {
             val taskTitle = serviceState.activeTaskTitle ?: "Задача..."
             val cardColor = when {
-                serviceState.isSystemPaused -> StatusOrange
-                serviceState.isUserPaused -> StatusYellow
-                else -> StatusBlue
-            }
-            val statusText = when {
-                serviceState.isSystemPaused && serviceState.isUserPaused -> "⏸️ Пауза (система и пользователь)"
-                serviceState.isSystemPaused -> "⏸️ Пауза (система: ${viewModel.workStatus.name.lowercase()})"
-                serviceState.isUserPaused -> "⏸️ Таймер приостановлен (пользователем)"
-                else -> "🕐 Активный таймер"
+                serviceState.isSystemPaused -> StatusOrange.copy(alpha = 0.8f) // Сделаем чуть прозрачнее для фона строки
+                serviceState.isUserPaused -> StatusYellow.copy(alpha = 0.8f)
+                else -> StatusBlue.copy(alpha = 0.8f)
             }
             val textColor = if (serviceState.isEffectivelyPaused) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
+
+            // Ищем задачу в списке viewModel.tasks, чтобы получить timeEstimate
+            val activeTaskDetails = viewModel.tasks.find { it.id == serviceState.activeTaskId }
+            val timeEstimateFormatted = activeTaskDetails?.let {
+                val estimateHours = it.timeEstimate / 3600
+                val estimateMinutes = (it.timeEstimate % 3600) / 60
+                String.format("%d:%02d", estimateHours, estimateMinutes)
+            } ?: "--:--"
+
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 colors = CardDefaults.elevatedCardColors(containerColor = cardColor)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = statusText,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = textColor
-                    )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp), // Уменьшенные отступы
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // Название задачи (сокращенное)
                     Text(
                         text = taskTitle,
-                        fontSize = 16.sp,
-                        maxLines = 2, // Увеличим до 2 строк, если заголовок длинный
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = viewModel.formatTime(serviceState.timerSeconds), // serviceState здесь уже не null из-за if
-                        fontSize = 20.sp,
+                        fontSize = 15.sp, // Чуть меньше для одной строки
                         fontWeight = FontWeight.Bold,
-                        color = textColor
+                        color = textColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false) // Занимает доступное место, но может сжиматься
                     )
-                    // Кнопка "Сохранить время" для активного таймера
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // Время (текущее / плановое)
+                    Text(
+                        text = "${viewModel.formatTime(serviceState.timerSeconds)} / $timeEstimateFormatted",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Normal, // Обычный шрифт для времени
+                        color = textColor,
+                        maxLines = 1
+                    )
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // Кнопка "Сохранить" с иконкой дискеты
+                    IconButton(
+                        onClick = { viewModel.stopAndSaveCurrentTimer() },
+                        modifier = Modifier.size(40.dp) // Компактный размер для IconButton
                     ) {
-                        TextButton(
-                            onClick = { viewModel.stopAndSaveCurrentTimer() },
-                            modifier = Modifier.padding(top = 8.dp)
-                        ) {
-                            Text("Сохранить время и остановить", color = textColor)
-                        }
+                        Icon(
+                            imageVector = Icons.Filled.Save,
+                            contentDescription = "Сохранить время и остановить",
+                            tint = textColor, // Цвет иконки соответствует тексту
+                            modifier = Modifier.size(24.dp)
+                        )
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(16.dp)) // Уменьшим отступ после карточки
         }
 
         // Состояние загрузки
