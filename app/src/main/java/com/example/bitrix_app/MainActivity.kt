@@ -2864,9 +2864,10 @@ fun TaskCard(
                     disabledContainerColor = sOnSurfaceTimer.copy(alpha = 0.12f),
                     disabledContentColor = sOnSurfaceTimer.copy(alpha = 0.38f)
                 )
+                val rememberedOnTimerToggle = remember(task) { { onTimerToggle(task) } }
 
                 Button(
-                    onClick = { onTimerToggle(task) },
+                    onClick = rememberedOnTimerToggle,
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp), // Увеличиваем высоту кнопки
                     enabled = !isTimerSystemPausedForThisTask,
                     elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
@@ -2899,8 +2900,9 @@ fun TaskCard(
                         containerColor = ProgressBarGreen,
                         contentColor = sOnPrimaryComplete
                     )
+                    val rememberedOnCompleteTask = remember(task) { { onCompleteTask(task) } }
                     Button(
-                        onClick = { onCompleteTask(task) },
+                        onClick = rememberedOnCompleteTask,
                         modifier = Modifier.weight(1f).heightIn(min = 52.dp), // Увеличиваем высоту кнопки
                         elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
                         colors = rememberedCompleteButtonColors
@@ -2936,15 +2938,18 @@ fun TaskCard(
                             }
                         }
                     )
-
-                    IconButton(
-                        onClick = {
+                    val rememberedOnToggleAudioRecording = remember(task, context) {
+                        {
                             if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                                 viewModel.toggleAudioRecording(task, context)
                             } else {
                                 recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                             }
-                        },
+                        }
+                    }
+
+                    IconButton(
+                        onClick = rememberedOnToggleAudioRecording,
                         modifier = Modifier
                             .heightIn(min = 52.dp)
                             .shadow(elevation = 2.dp, shape = CircleShape) // Тень для IconButton
