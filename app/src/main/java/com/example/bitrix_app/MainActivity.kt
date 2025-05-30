@@ -1289,6 +1289,38 @@ class MainViewModel : ViewModel() {
         currentTime = String.format("%02d:%02d:%02d", hour, minute, second)
     }
 
+    fun stopAndSaveCurrentTimer() {
+        val service = timerService ?: return
+        val currentServiceState = timerServiceState ?: return
+        val activeTaskId = currentServiceState.activeTaskId ?: return
+        val currentUser = users[currentUserIndex]
+
+        Timber.i("stopAndSaveCurrentTimer called for task ID $activeTaskId by user ${currentUser.name}")
+
+        val task = tasks.find { it.id == activeTaskId }
+        if (task == null) {
+            Timber.w("Task with ID $activeTaskId not found in ViewModel's list. Cannot save time.")
+            // Попытаемся остановить таймер в сервисе в любом случае, но без сохранения/комментария
+            service.stopTaskTimer(currentUser.userId)
+            errorMessage = "Активная задача не найдена, таймер остановлен."
+            return
+        }
+
+        val secondsToSave = service.stopTaskTimer(currentUser.userId)
+        Timber.d("Timer stopped for task ${task.id} via stopAndSaveCurrentTimer. Seconds from service: $secondsToSave")
+
+        if (secondsToSave > 0) { // stopTimerAndSaveTime имеет свою проверку на >= 10 секунд
+            stopTimerAndSaveTime(task, secondsToSave)
+            if (sendComments) {
+                sendTimerComment(task, "Таймер остановлен, время учтено", secondsToSave)
+            }
+        } else {
+            Timber.i("Timer for task ${task.id} had 0 seconds or less. Not saving time or sending comment.")
+        }
+        // Обновление списка задач (loadTasks()) вызывается внутри stopTimerAndSaveTime
+        // Состояние timerServiceState обновится автоматически, и карточка активного таймера исчезнет.
+    }
+
     fun getCurrentUser() = users[currentUserIndex]
 
     fun toggleAudioRecording(task: Task, context: Context) {
@@ -2138,6 +2170,19 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                         fontWeight = FontWeight.Bold,
                         color = textColor
                     )
+                    // Кнопка "Сохранить время" для активного таймера
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = { viewModel.stopAndSaveCurrentTimer() },
+                            modifier = Modifier.padding(top = 8.dp)
+                        ) {
+                            Text("Сохранить время и остановить", color = textColor)
+                        }
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(20.dp))
