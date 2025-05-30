@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow // <--- Добавляем этот импорт
+import androidx.compose.ui.graphics.Brush // For gradient
 import androidx.compose.ui.graphics.Color
 import android.Manifest // Для запроса разрешений
 import android.content.pm.PackageManager // Для проверки разрешений
@@ -2413,10 +2414,15 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
             }
         }
 
-
-        LazyColumn {
-            items(viewModel.tasks, key = { task -> task.id }) { task ->
-                // Получаем состояние конкретно для этой задачи из общего состояния сервиса
+        // Box to hold LazyColumn and the top fading edge effect
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(), // LazyColumn fills the Box
+                // Consider adding contentPadding if items should not start completely under the opaque part of the gradient
+                // contentPadding = PaddingValues(top = 12.dp) // e.g., half of gradient height
+            ) {
+                items(viewModel.tasks, key = { task -> task.id }) { task ->
+                    // Получаем состояние конкретно для этой задачи из общего состояния сервиса
                 val sState = viewModel.timerServiceState // TimerServiceState?
                 val isTimerRunningForThisTask = sState?.activeTaskId == task.id && sState.isEffectivelyPaused == false
                 val isTimerUserPausedForThisTask = sState?.activeTaskId == task.id && sState.isUserPaused == true
@@ -2433,9 +2439,26 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                 )
                 Spacer(modifier = Modifier.height(10.dp))
             }
-        }
-    }
-}
+        } // End of LazyColumn
+
+        // Gradient overlay at the top of the LazyColumn area
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(24.dp) // Height of the fade effect, adjust as needed
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.background, // Opaque at the top (same as screen background)
+                            MaterialTheme.colorScheme.background.copy(alpha = 0.0f) // Transparent at the bottom
+                        )
+                    )
+                )
+                .align(Alignment.TopCenter) // Align this gradient Box to the top of its parent Box
+        )
+    } // End of Box wrapper for LazyColumn and gradient
+} // End of MainScreen's primary Column
+} // End of MainScreen composable
 
 @Composable
 private fun RenderUserAvatar(user: User, size: Int) { // Принимаем User напрямую
