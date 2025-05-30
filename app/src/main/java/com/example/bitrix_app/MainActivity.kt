@@ -319,7 +319,8 @@ class MainViewModel : ViewModel() {
                         response.body?.let { body ->
                             try {
                                 val responseText = body.string()
-                                Timber.d("Load tasks API Response: $responseText")
+                                // Timber.d("Load tasks API Response: $responseText") // Заменено на логирование длины
+                                Timber.d("Load tasks API Response: Received ${responseText.length} characters for user ${user.name}")
 
                                 val json = JSONObject(responseText)
 
@@ -409,7 +410,8 @@ class MainViewModel : ViewModel() {
                         response.body?.let { body ->
                             try {
                                 val responseText = body.string()
-                                Timber.d("Simple API Response for user ${user.name}: $responseText")
+                                // Timber.d("Simple API Response for user ${user.name}: $responseText") // Заменено на логирование длины
+                                Timber.d("Simple API Response: Received ${responseText.length} characters for user ${user.name}")
 
                                 val json = JSONObject(responseText)
                                 if (json.has("result")) {
@@ -495,7 +497,8 @@ class MainViewModel : ViewModel() {
                         response.body?.let { body ->
                             try {
                                 val responseText = body.string()
-                                Timber.d("Alternative API Response for user ${user.name}: $responseText")
+                                // Timber.d("Alternative API Response for user ${user.name}: $responseText") // Заменено на логирование длины
+                                Timber.d("Alternative API Response: Received ${responseText.length} characters for user ${user.name}")
 
                                 val json = JSONObject(responseText)
                                 if (json.has("result")) {
@@ -2828,12 +2831,12 @@ fun TaskCard(
                         elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
                         colors = rememberedCompleteButtonColors
                     ) {
-                        Icon(Icons.Filled.Check, contentDescription = "Завершить", modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Завершить",
-                            fontSize = 16.sp // Увеличиваем шрифт
-                        )
+                        Icon(Icons.Filled.Check, contentDescription = "Завершить", modifier = Modifier.size(28.dp)) // Увеличим иконку, т.к. текст убран
+                        // Spacer(modifier = Modifier.width(4.dp)) // Больше не нужен
+                        // Text( // Текст "Завершить" удален
+                        //     text = "Завершить",
+                        //     fontSize = 16.sp
+                        // )
                     }
                 }
 
