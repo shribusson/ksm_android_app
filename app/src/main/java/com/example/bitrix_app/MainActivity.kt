@@ -2298,23 +2298,36 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
         }
 
         // Список задач
-        // Сообщение о процессе записи/обработки аудио
-        viewModel.audioProcessingMessage?.let { message ->
+        // Сообщения о статусе операций (аудио, быстрое создание задачи)
+        val audioMessage = viewModel.audioProcessingMessage
+        val taskCreationMessage = viewModel.quickTaskCreationStatus
+
+        if (audioMessage != null || taskCreationMessage != null) {
+            val messageToDisplay = taskCreationMessage ?: audioMessage // Приоритет у сообщения о создании задачи
+            // Проверяем, является ли сообщение об ошибке (если errorMessage установлен И quickTaskCreationStatus содержит "Ошибка")
+            // или если audioProcessingMessage содержит "Ошибка" (на случай ошибок аудио без установки errorMessage)
+            val isError = (viewModel.errorMessage != null && taskCreationMessage?.contains("Ошибка", ignoreCase = true) == true) ||
+                          (audioMessage?.contains("Ошибка", ignoreCase = true) == true && taskCreationMessage == null)
+
+
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp), // Небольшая тень для сообщения
-                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer) // Используем elevatedCardColors
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                )
             ) {
                 Text(
-                    text = message,
+                    text = messageToDisplay!!, // messageToDisplay не будет null из-за условия if
                     modifier = Modifier.padding(16.dp),
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    color = if (isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                     textAlign = TextAlign.Center
                 )
             }
         }
+
 
         LazyColumn {
             items(viewModel.tasks, key = { task -> task.id }) { task ->
