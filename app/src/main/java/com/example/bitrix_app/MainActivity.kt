@@ -139,7 +139,7 @@ class MainViewModel : ViewModel() {
     var workStatus by mutableStateOf(WorkStatus.WORKING)
     var isLoading by mutableStateOf(false)
     var errorMessage by mutableStateOf<String?>(null)
-    var sendComments by mutableStateOf(true) // Настройка отправки комментариев
+    var sendComments by mutableStateOf(false) // Настройка отправки комментариев (по умолчанию отключена)
 
     // Состояние раскрытия карточек задач
     var expandedTaskIds by mutableStateOf<Set<String>>(emptySet())
@@ -2067,6 +2067,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                         expanded = isSettingsExpanded,
                         onDismissRequest = { isSettingsExpanded = false }
                     ) {
+                        /* // Отключено согласно задаче - скрыть настройку отправки комментариев
                         DropdownMenuItem(
                             text = {
                                 Row(
@@ -2085,6 +2086,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                                 isSettingsExpanded = false
                             }
                         )
+                        */
                         // --- Пункты выбора темы ---
                         AppThemeOptions.values().forEach { themeOption ->
                             DropdownMenuItem(
