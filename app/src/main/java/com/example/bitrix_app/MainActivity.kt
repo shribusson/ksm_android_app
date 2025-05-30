@@ -1281,8 +1281,8 @@ class MainViewModel : ViewModel() {
             quickTaskCreationStatus = "Создание задачи '${taskType.titlePrefix}'..."
             errorMessage = null // Сбрасываем общую ошибку перед новой операцией
             val user = users[currentUserIndex]
-            val timestamp = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date())
-            val taskTitle = "${taskType.titlePrefix} - ${user.name} - $timestamp"
+            // val timestamp = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date()) // Удаляем timestamp
+            val taskTitle = "${taskType.titlePrefix} - ${user.name}" // Название задачи без времени
 
             val url = "${user.webhookUrl}tasks.task.add"
             val formBodyBuilder = FormBody.Builder()
@@ -1313,11 +1313,22 @@ class MainViewModel : ViewModel() {
                                 val json = JSONObject(responseText)
                                 if (json.has("result") && json.getJSONObject("result").has("task")) {
                                     val createdTaskJson = json.getJSONObject("result").getJSONObject("task")
-                                    val createdTaskId = createdTaskJson.optString("id", "N/A")
-                                    quickTaskCreationStatus = "Задача '${taskType.titlePrefix}' (ID: $createdTaskId) создана!"
+                                    val createdTaskId = createdTaskJson.optString("id", "N/A") // Получаем ID созданной задачи
+                                    quickTaskCreationStatus = "Задача '${taskType.titlePrefix}' (ID: $createdTaskId) создана! Запускаем таймер..."
                                     Timber.i("Standard task '${taskType.titlePrefix}' (ID: $createdTaskId) created successfully. Response: $responseText")
-                                    delay(1000)
+
+                                    // Создаем объект Task из ответа, чтобы запустить таймер
+                                    val newlyCreatedTask = createTaskFromJson(createdTaskJson, createdTaskId)
+
+                                    // Запускаем таймер для новой задачи
+                                    toggleTimer(newlyCreatedTask)
+
+                                    // Обновляем список задач
+                                    // Небольшая задержка перед loadTasks, чтобы toggleTimer успел отработать с UI (сортировка)
+                                    // и чтобы сообщение о создании было видно чуть дольше перед обновлением списка
+                                    delay(1500)
                                     loadTasks()
+                                    // quickTaskCreationStatus будет сброшен через 3.5 секунды общего таймера ниже
                                 } else if (json.has("error")) {
                                     val errorDesc = json.optString("error_description", "Неизвестная ошибка API")
                                     quickTaskCreationStatus = "Ошибка API: $errorDesc"
