@@ -27,6 +27,8 @@ import androidx.compose.material.icons.filled.Check // Для галочки з�
 import androidx.compose.material.icons.filled.ExpandLess // Для иконки "свернуть"
 import androidx.compose.material.icons.filled.ExpandMore // Для иконки "развернуть"
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Pause // Для иконки паузы
+import androidx.compose.material.icons.filled.PlayArrow // Для иконки старт/продолжить
 import androidx.compose.material.icons.filled.Refresh // Для кнопки "Обновить"
 import androidx.compose.material.icons.filled.Stop // Для иконки остановки записи
 import androidx.compose.material3.*
@@ -2700,14 +2702,23 @@ fun TaskCard(
                     elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
                     colors = timerButtonColors
                 ) {
-                    Text(
-                        text = when {
-                            isTimerRunningForThisTask -> "⏹️ Стоп"
-                            isTimerUserPausedForThisTask -> "▶️ Продолжить"
-                            isTimerSystemPausedForThisTask -> "⏸️ Пауза"
-                            else -> "▶️ Старт"
-                        },
-                        fontSize = 16.sp // Увеличиваем шрифт
+                    val iconVector = when {
+                        isTimerRunningForThisTask -> Icons.Filled.Stop
+                        isTimerUserPausedForThisTask -> Icons.Filled.PlayArrow
+                        isTimerSystemPausedForThisTask -> Icons.Filled.Pause // Иконка для состояния системной паузы (кнопка disabled)
+                        else -> Icons.Filled.PlayArrow
+                    }
+                    val contentDescription = when {
+                        isTimerRunningForThisTask -> "Остановить таймер"
+                        isTimerUserPausedForThisTask -> "Продолжить таймер"
+                        isTimerSystemPausedForThisTask -> "Таймер на системной паузе"
+                        else -> "Запустить таймер"
+                    }
+                    Icon(
+                        imageVector = iconVector,
+                        contentDescription = contentDescription,
+                        modifier = Modifier.size(28.dp) // Увеличиваем размер иконки
+                        // tint будет применен автоматически из ButtonDefaults
                     )
                 }
 
