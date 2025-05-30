@@ -2059,7 +2059,7 @@ fun LogViewerScreen(
                 actions = {
                     IconButton(onClick = onRefresh) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Обновить")
-                    }в
+                    }
                 }
             )
         }
