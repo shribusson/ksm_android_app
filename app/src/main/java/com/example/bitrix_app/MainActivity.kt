@@ -145,6 +145,13 @@ class MainViewModel : ViewModel() {
     var expandedTaskIds by mutableStateOf<Set<String>>(emptySet())
         private set
 
+    // Enum для стандартных типов задач
+    enum class StandardTaskType(val titlePrefix: String, val emoji: String, val defaultPriority: String = "1") {
+        RIGGING("Такелаж", "🏗️"), // U+1F3D7
+        FIX_MISTAKES("Исправление косяков", "🛠️"), // U+1F6E0
+        UNEXPECTED("Неожиданная задача", "✨", "2") // U+2728, High priority
+    }
+
     // Состояния для чек-листов и подзадач
     var checklistsMap by mutableStateOf<Map<String, List<ChecklistItem>>>(emptyMap())
         private set
@@ -178,6 +185,10 @@ class MainViewModel : ViewModel() {
 
     // Состояние таймера, полученное от сервиса
     var timerServiceState by mutableStateOf<TimerServiceState?>(null) // Сделаем nullable
+        private set
+
+    // Состояние для обратной связи при быстром создании задач
+    var quickTaskCreationStatus by mutableStateOf<String?>(null)
         private set
 
 
@@ -224,7 +235,7 @@ class MainViewModel : ViewModel() {
         Timber.d("Toggled expansion for task $taskId. Expanded IDs: $expandedTaskIds")
     }
 
-    var currentTime by mutableStateOf("")
+    // var currentTime by mutableStateOf("") // Удалено
 
     // Контекст нужен для SharedPreferences
     fun initViewModel(context: Context) {
@@ -235,7 +246,7 @@ class MainViewModel : ViewModel() {
         loadTasks()
         startPeriodicUpdates()
         startPeriodicTaskUpdates()
-        startTimeUpdates()
+        // startTimeUpdates() // Удалено
         // startUniversalTimerLoop() // Удалено, логика таймера теперь в сервисе
         val currentUserForInit = users[currentUserIndex]
         timerService?.setCurrentUser(currentUserForInit.userId, currentUserForInit.name) // Уведомляем сервис, если он уже подключен
@@ -1261,21 +1272,74 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    private fun startTimeUpdates() {
-        viewModelScope.launch {
-            while (true) {
-                updateCurrentTime()
-                delay(1000) // каждую секунду
-            }
-        }
-    }
+    // private fun startTimeUpdates() // Удалено
+    // private fun updateCurrentTime() // Удалено
 
-    private fun updateCurrentTime() {
-        val calendar = Calendar.getInstance()
-        val hour = calendar.get(Calendar.HOUR_OF_DAY)
-        val minute = calendar.get(Calendar.MINUTE)
-        val second = calendar.get(Calendar.SECOND)
-        currentTime = String.format("%02d:%02d:%02d", hour, minute, second)
+    fun createStandardTask(taskType: StandardTaskType, context: Context) {
+        viewModelScope.launch {
+            // Используем quickTaskCreationStatus для индикации загрузки этого конкретного действия
+            quickTaskCreationStatus = "Создание задачи '${taskType.titlePrefix}'..."
+            errorMessage = null // Сбрасываем общую ошибку перед новой операцией
+            val user = users[currentUserIndex]
+            val timestamp = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date())
+            val taskTitle = "${taskType.titlePrefix} - ${user.name} - $timestamp"
+
+            val url = "${user.webhookUrl}tasks.task.add"
+            val formBodyBuilder = FormBody.Builder()
+                .add("fields[TITLE]", taskTitle)
+                .add("fields[RESPONSIBLE_ID]", user.userId)
+                .add("fields[CREATED_BY]", user.userId)
+                .add("fields[DESCRIPTION]", "Стандартная задача, создана автоматически из приложения.")
+                .add("fields[PRIORITY]", taskType.defaultPriority)
+
+            val request = Request.Builder().url(url).post(formBodyBuilder.build()).build()
+            Timber.d("Creating standard task: ${taskType.titlePrefix} for user ${user.name}. URL: $url, Title: $taskTitle")
+
+            client.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    viewModelScope.launch {
+                        quickTaskCreationStatus = "Ошибка создания задачи: ${e.message}"
+                        Timber.e(e, "Network error while creating standard task '${taskType.titlePrefix}'")
+                        delay(3500) // Даем время прочитать сообщение
+                        quickTaskCreationStatus = null
+                    }
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    viewModelScope.launch {
+                        val responseText = response.body?.string()
+                        if (response.isSuccessful && responseText != null) {
+                            try {
+                                val json = JSONObject(responseText)
+                                if (json.has("result") && json.getJSONObject("result").has("task")) {
+                                    val createdTaskJson = json.getJSONObject("result").getJSONObject("task")
+                                    val createdTaskId = createdTaskJson.optString("id", "N/A")
+                                    quickTaskCreationStatus = "Задача '${taskType.titlePrefix}' (ID: $createdTaskId) создана!"
+                                    Timber.i("Standard task '${taskType.titlePrefix}' (ID: $createdTaskId) created successfully. Response: $responseText")
+                                    delay(1000)
+                                    loadTasks()
+                                } else if (json.has("error")) {
+                                    val errorDesc = json.optString("error_description", "Неизвестная ошибка API")
+                                    quickTaskCreationStatus = "Ошибка API: $errorDesc"
+                                    Timber.w("API error creating standard task '${taskType.titlePrefix}': $errorDesc. Response: $responseText")
+                                } else {
+                                    quickTaskCreationStatus = "Неизвестный ответ от сервера."
+                                    Timber.w("Unknown response while creating standard task '${taskType.titlePrefix}'. Response: $responseText")
+                                }
+                            } catch (e: Exception) {
+                                quickTaskCreationStatus = "Ошибка обработки ответа: ${e.message}"
+                                Timber.e(e, "Parse error in create standard task response for '${taskType.titlePrefix}'")
+                            }
+                        } else {
+                            quickTaskCreationStatus = "Ошибка сервера: ${response.code}"
+                            Timber.e("HTTP error creating standard task '${taskType.titlePrefix}': ${response.code} - ${response.message}. Body: $responseText")
+                        }
+                        delay(3500) // Даем время прочитать сообщение
+                        quickTaskCreationStatus = null
+                    }
+                }
+            })
+        }
     }
 
     fun stopAndSaveCurrentTimer() {
@@ -2064,13 +2128,24 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                 }
             }
 
-            // Текущее время в центре (может потребоваться调整布局, если аватары занимают много места)
-            Text(
-                text = viewModel.currentTime,
-                fontSize = 32.sp, // Увеличиваем шрифт времени
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
+            // Иконки для быстрого создания задач
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                MainViewModel.StandardTaskType.values().forEach { taskType ->
+                    IconButton(
+                        onClick = { viewModel.createStandardTask(taskType, context) },
+                        modifier = Modifier.size(48.dp) // Стандартизируем размер кнопки
+                    ) {
+                        Text(
+                            text = taskType.emoji,
+                            fontSize = 28.sp, // Размер эмодзи
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
 
             // Меню настроек и иконка статуса работы
             Row(
@@ -2697,13 +2772,13 @@ fun TaskCard(
                     colors = timerButtonColors
                 ) {
                     val iconVector = when {
-                        isTimerRunningForThisTask -> Icons.Filled.Stop
+                        isTimerRunningForThisTask -> Icons.Filled.Pause // ИЗМЕНЕНО: Stop на Pause
                         isTimerUserPausedForThisTask -> Icons.Filled.PlayArrow
-                        isTimerSystemPausedForThisTask -> Icons.Filled.Pause // Иконка для состояния системной паузы (кнопка disabled)
+                        isTimerSystemPausedForThisTask -> Icons.Filled.Pause
                         else -> Icons.Filled.PlayArrow
                     }
                     val contentDescription = when {
-                        isTimerRunningForThisTask -> "Остановить таймер"
+                        isTimerRunningForThisTask -> "Приостановить таймер" // ИЗМЕНЕНО: "Остановить" на "Приостановить"
                         isTimerUserPausedForThisTask -> "Продолжить таймер"
                         isTimerSystemPausedForThisTask -> "Таймер на системной паузе"
                         else -> "Запустить таймер"
