@@ -2144,17 +2144,17 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
 
             // Иконки для быстрого создания задач
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp), // Увеличиваем расстояние между иконками
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 MainViewModel.StandardTaskType.values().forEach { taskType ->
                     IconButton(
                         onClick = { viewModel.createStandardTask(taskType, context) },
-                        modifier = Modifier.size(48.dp) // Стандартизируем размер кнопки
+                        modifier = Modifier.size(56.dp) // Увеличиваем размер кнопки
                     ) {
                         Text(
                             text = taskType.emoji,
-                            fontSize = 28.sp, // Размер эмодзи
+                            fontSize = 32.sp, // Увеличиваем размер эмодзи
                             textAlign = TextAlign.Center
                         )
                     }
