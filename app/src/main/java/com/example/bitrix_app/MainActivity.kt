@@ -711,12 +711,9 @@ class MainViewModel : ViewModel() {
                 return false
             }
         }
-        // Проверяем, что в старом списке нет задач, которые исчезли из нового (удаление)
-        if (oldList.any { oldTask -> newList.none { newTask -> newTask.id == oldTask.id } }) {
-            Timber.d("Task lists differ: Some tasks were removed.")
-            return false
-        }
-
+        // Если мы дошли до сюда, и размеры списков были одинаковы,
+        // и все элементы из newList найдены в oldList с теми же значениями,
+        // то списки эквивалентны. Дополнительная проверка на удаленные элементы не нужна.
 
         return true // Списки идентичны по ключевым полям
     }
