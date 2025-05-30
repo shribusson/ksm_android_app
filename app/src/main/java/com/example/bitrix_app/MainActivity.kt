@@ -89,6 +89,7 @@ data class Task(
     val isInProgress: Boolean get() = status == "2" // 2 = В работе
     val isPending: Boolean get() = status == "3" // 3 = Ждет выполнения
 
+    // statusText больше не используется в TaskCard в текущей конфигурации, но оставим на случай будущего использования
     val statusText: String get() = when (status) {
         "1" -> "Новая"
         "2" -> "В работе"
@@ -117,10 +118,7 @@ data class ChecklistItem(
     val isComplete: Boolean
 )
 
-// Enum для выбора темы
-enum class AppThemeOptions {
-    SYSTEM, LIGHT, DARK
-}
+// Enum AppThemeOptions удален, так как тема будет фиксированной
 
 // ViewModel
 class MainViewModel : ViewModel() {
@@ -170,8 +168,7 @@ class MainViewModel : ViewModel() {
     var logLines by mutableStateOf<List<String>>(emptyList())
         private set
 
-    // Состояние для выбранной темы для каждого пользователя
-    private var userSelectedThemeMap by mutableStateOf<Map<String, AppThemeOptions>>(emptyMap())
+    // Состояние userSelectedThemeMap удалено
 
     // Ссылка на сервис таймера
     var timerService by mutableStateOf<TimerService?>(null)
@@ -245,17 +242,7 @@ class MainViewModel : ViewModel() {
     }
     private var isInitialized = false
 
-
-    fun getCurrentUserTheme(): AppThemeOptions {
-        val userId = users[currentUserIndex].userId
-        return userSelectedThemeMap[userId] ?: AppThemeOptions.SYSTEM
-    }
-
-    fun selectTheme(theme: AppThemeOptions) {
-        val userId = users[currentUserIndex].userId
-        userSelectedThemeMap = userSelectedThemeMap + (userId to theme)
-        Timber.i("App theme changed to: $theme for user $userId (${users[currentUserIndex].name})")
-    }
+    // Функции getCurrentUserTheme и selectTheme удалены
 
     fun switchUser(index: Int, context: Context) {
         Timber.i("Switching user to index $index: ${users.getOrNull(index)?.name ?: "Unknown"}")
@@ -1741,13 +1728,18 @@ class MainViewModel : ViewModel() {
                     // В реальном приложении, это нужно будет обработать в Activity.
                     // Однако, если context - это Activity, то можно сделать так:
                     if (context is ComponentActivity) { // Проверяем, является ли контекст Activity
-                         context.startActivity(chooserIntent)
-                         audioProcessingMessage = "Подготовка к отправке логов..." // Используем существующее поле для сообщения
-                         delay(2000)
-                         audioProcessingMessage = null
+                        context.startActivity(chooserIntent)
+                        // Сообщение об отправке логов теперь может быть другим или отсутствовать,
+                        // т.к. audioProcessingMessage используется для аудио.
+                        // Можно добавить новое состояние для сообщений общего назначения или использовать errorMessage.
+                        // Пока оставим как есть, но это место для улучшения.
+                        // audioProcessingMessage = "Подготовка к отправке логов..."
+                        // delay(2000)
+                        // audioProcessingMessage = null
+                        Timber.i("Share logs intent started.")
                     } else {
-                         Timber.e("Cannot start share intent from non-Activity context. Context type: ${context.javaClass.name}")
-                         errorMessage = "Не удалось инициировать отправку логов: неверный контекст."
+                        Timber.e("Cannot start share intent from non-Activity context. Context type: ${context.javaClass.name}")
+                        errorMessage = "Не удалось инициировать отправку логов: неверный контекст."
                     }
 
                     Timber.i("Share logs intent created for URI: $logUri")
@@ -1767,9 +1759,9 @@ class MainViewModel : ViewModel() {
             try {
                 val logFile = FileLoggingTree.getLogFile(context)
                 if (logFile.exists()) {
-                    val lines = logFile.readLines().reversed() // Читаем строки и переворачиваем (новые сверху)
-                    logLines = lines
-                    Timber.i("Loaded ${lines.size} log lines from ${logFile.name}")
+                    val rawLines = logFile.readLines().reversed() // Читаем строки и переворачиваем (новые сверху)
+                    logLines = rawLines.mapNotNull { formatLogLineForDisplay(it) }
+                    Timber.i("Loaded and formatted ${logLines.size} log lines from ${logFile.name}")
                 } else {
                     logLines = listOf("Файл логов не найден: ${logFile.absolutePath}")
                     Timber.w("Log file not found for viewing: ${logFile.absolutePath}")
@@ -1779,6 +1771,40 @@ class MainViewModel : ViewModel() {
                 logLines = listOf("Ошибка при чтении файла логов: ${e.message}")
             }
         }
+    }
+
+    private fun formatLogLineForDisplay(line: String): String? {
+        // Пример строки: 2023-10-27 15:30:45.123 I/MyActivity: Activity created
+        val regex = """^\d{4}-\d{2}-\d{2} (\d{2}:\d{2}:\d{2})\.\d{3} ([VDIWEA])/(.*?): (.*)$""".toRegex()
+        val match = regex.find(line)
+        return if (match != null) {
+            val time = match.groupValues[1]
+            val levelChar = match.groupValues[2]
+            // val tag = match.groupValues[3] // Тег пока не используем в упрощенном отображении
+            val message = match.groupValues[4]
+
+            val levelStr = when (levelChar) {
+                "V" -> "VERBOSE"
+                "D" -> "DEBUG"
+                "I" -> "INFO"
+                "W" -> "WARN"
+                "E" -> "ERROR"
+                "A" -> "ASSERT"
+                else -> levelChar
+            }
+            "$time $levelStr: $message"
+        } else {
+            line // Если не совпало с форматом, возвращаем как есть (или null, чтобы отфильтровать)
+            // Для более чистого отображения, можно вернуть null, если строка не соответствует ожидаемому формату.
+            // null // Возвращаем null, если строка не соответствует ожидаемому формату
+        }
+    }
+
+    fun exportDetailedLogs(context: Context) {
+        // Эта функция просто вызывает существующую shareLogs,
+        // так как shareLogs уже отправляет полный, неформатированный файл логов.
+        Timber.i("exportDetailedLogs called, invoking shareLogs.")
+        shareLogs(context)
     }
 }
 
@@ -1882,8 +1908,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-
-            Bitrix_appTheme(appTheme = viewModel.getCurrentUserTheme()) {
+            // Вызов Bitrix_appTheme теперь без параметра appTheme
+            Bitrix_appTheme {
                 var showLogScreen by remember { mutableStateOf(false) }
 
                 if (showLogScreen) {
@@ -2087,36 +2113,20 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                             }
                         )
                         */
-                        // --- Пункты выбора темы ---
-                        AppThemeOptions.values().forEach { themeOption ->
-                            DropdownMenuItem(
-                                text = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (viewModel.getCurrentUserTheme() == themeOption) { // Проверяем тему текущего пользователя
-                                            Text("✓ ", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                                        } else {
-                                            Text("   ") // Для выравнивания
-                                        }
-                                        Text(when(themeOption) {
-                                            AppThemeOptions.SYSTEM -> "Как в системе"
-                                            AppThemeOptions.LIGHT -> "Светлая"
-                                            AppThemeOptions.DARK -> "Темная"
-                                            // OCEAN и FOREST удалены
-                                        })
-                                    }
-                                },
-                                onClick = {
-                                    viewModel.selectTheme(themeOption)
-                                    isSettingsExpanded = false
-                                }
-                            )
-                        }
-                        Divider() // Разделитель перед другими опциями
-                        // --- Конец пунктов выбора темы ---
+                        // --- Пункты выбора темы удалены ---
+                        // Divider() // Разделитель перед другими опциями (если он был только для тем)
+
                         DropdownMenuItem(
-                            text = { Text("Посмотреть логи") },
+                            text = { Text("Посмотреть логи (упрощенные)") },
                             onClick = {
                                 onShowLogs()
+                                isSettingsExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Выгрузить подробные логи") },
+                            onClick = {
+                                viewModel.exportDetailedLogs(context) // Используем context из LocalContext.current
                                 isSettingsExpanded = false
                             }
                         )
@@ -2163,7 +2173,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                     Text(
                         text = taskTitle,
                         fontSize = 16.sp,
-                        maxLines = 1,
+                        maxLines = 2, // Увеличим до 2 строк, если заголовок длинный
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
@@ -2650,7 +2660,7 @@ fun TaskCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ
+            // Spacer(modifier = Modifier.height(16.dp)) // Этот Spacer, кажется, лишний здесь, был между подзадачами и кнопками. Убираем.
 
             // Кнопки действий
             Row(
