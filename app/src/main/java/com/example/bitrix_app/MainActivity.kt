@@ -2891,6 +2891,57 @@ fun TaskCard(
                                         color = scheme.onSurfaceVariant // Используем scheme
                                     )
                                 }
+                                // Кнопка таймера для подзадачи
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End // Кнопку справа
+                                ) {
+                                    val sState = viewModel.timerServiceState
+                                    val isTimerRunningForThisSubtask = sState?.activeTaskId == subtask.id && !sState.isEffectivelyPaused
+                                    val isTimerUserPausedForThisSubtask = sState?.activeTaskId == subtask.id && sState.isUserPaused
+                                    val isTimerSystemPausedForThisSubtask = sState?.activeTaskId == subtask.id && sState.isSystemPaused
+
+                                    val subtaskTimerButtonColors = ButtonDefaults.iconButtonColors( // Используем IconButtonColors
+                                        containerColor = when {
+                                            isTimerRunningForThisSubtask -> scheme.error.copy(alpha = 0.1f)
+                                            isTimerUserPausedForThisSubtask -> scheme.tertiary.copy(alpha = 0.1f)
+                                            isTimerSystemPausedForThisSubtask -> scheme.onSurface.copy(alpha = 0.05f)
+                                            else -> scheme.primary.copy(alpha = 0.1f)
+                                        },
+                                        contentColor = when {
+                                            isTimerRunningForThisSubtask -> scheme.error
+                                            isTimerUserPausedForThisSubtask -> scheme.tertiary
+                                            isTimerSystemPausedForThisSubtask -> scheme.onSurface.copy(alpha = 0.6f)
+                                            else -> scheme.primary
+                                        }
+                                    )
+
+                                    IconButton(
+                                        onClick = { viewModel.toggleTimer(subtask) },
+                                        enabled = !isTimerSystemPausedForThisSubtask,
+                                        colors = subtaskTimerButtonColors,
+                                        modifier = Modifier.size(40.dp) // Компактный размер
+                                    ) {
+                                        val iconVector = when {
+                                            isTimerRunningForThisSubtask -> Icons.Filled.Pause
+                                            isTimerUserPausedForThisSubtask -> Icons.Filled.PlayArrow
+                                            isTimerSystemPausedForThisSubtask -> Icons.Filled.Pause
+                                            else -> Icons.Filled.PlayArrow
+                                        }
+                                        val contentDescription = when {
+                                            isTimerRunningForThisSubtask -> "Приостановить таймер подзадачи"
+                                            isTimerUserPausedForThisSubtask -> "Продолжить таймер подзадачи"
+                                            isTimerSystemPausedForThisSubtask -> "Таймер подзадачи на системной паузе"
+                                            else -> "Запустить таймер подзадачи"
+                                        }
+                                        Icon(
+                                            imageVector = iconVector,
+                                            contentDescription = contentDescription,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
