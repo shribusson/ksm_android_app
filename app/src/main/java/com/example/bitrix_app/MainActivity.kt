@@ -357,7 +357,8 @@ class MainViewModel : ViewModel() {
                 "&select[]=STATUS" +
                 "&select[]=RESPONSIBLE_ID" +
                 "&select[]=CHANGED_DATE" + // Добавляем CHANGED_DATE
-                "&select[]=UF_TASK_WEBDAV_FILES" // Возвращаем поле для прикрепленных файлов
+                "&select[]=UF_TASK_WEBDAV_FILES" + // По-прежнему запрашиваем его явно
+                "&select[]=UF_*" // Запрашиваем все пользовательские поля для диагностики
                 // PARENT_ID удален
 
         Timber.d("Loading tasks with URL: $url")
@@ -498,8 +499,8 @@ class MainViewModel : ViewModel() {
     // Простой метод загрузки без фильтров
     private fun loadTasksSimple() {
         val user = users[currentUserIndex]
-        // Возвращаем UF_TASK_WEBDAV_FILES в простой запрос
-        val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=UF_TASK_WEBDAV_FILES"
+        // Возвращаем UF_TASK_WEBDAV_FILES и добавляем UF_* в простой запрос
+        val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=UF_TASK_WEBDAV_FILES&select[]=UF_*"
 
         Timber.d("Trying simple URL with basic fields for user ${user.name}: $url")
 
@@ -620,7 +621,7 @@ class MainViewModel : ViewModel() {
         val url = "${user.webhookUrl}tasks.task.list" +
                 "?order[ID]=desc" + // Оставляем сортировку по ID для альтернативного варианта
                 // "&filter[CREATED_BY]=${user.userId}" + // Убираем фильтр по CREATED_BY, он может быть слишком строгим
-                "&select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=UF_TASK_WEBDAV_FILES" // Возвращаем UF_TASK_WEBDAV_FILES
+                "&select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=UF_TASK_WEBDAV_FILES&select[]=UF_*" // Возвращаем UF_TASK_WEBDAV_FILES и UF_*
 
         Timber.d("Trying alternative URL for user ${user.name}: $url")
 
@@ -771,11 +772,18 @@ class MainViewModel : ViewModel() {
         // Timber.v("Creating task from JSON: ${taskJson.toString().take(100)}...") // Может быть слишком многословно
         val timeSpent = taskJson.optInt("timeSpentInLogs",
             taskJson.optInt("TIME_SPENT_IN_LOGS", 0))
+        val currentTaskIdForLog = taskJson.optString("id", taskJson.optString("ID", fallbackId))
+
+        // Диагностическое логирование всех UF_ полей
+        taskJson.keys().forEach { key ->
+            if (key.startsWith("UF_")) {
+                Timber.d("Task ID $currentTaskIdForLog: Diagnostic - Found UF field: $key, Value: ${taskJson.opt(key)}")
+            }
+        }
 
         // Возвращаем парсинг UF_TASK_WEBDAV_FILES
         val fileIds = mutableListOf<String>()
         val filesValue = taskJson.opt("UF_TASK_WEBDAV_FILES")
-        val currentTaskIdForLog = taskJson.optString("id", taskJson.optString("ID", fallbackId))
         Timber.d("Task ID $currentTaskIdForLog: UF_TASK_WEBDAV_FILES raw value is '$filesValue' of type ${filesValue?.javaClass?.simpleName}")
 
         when (filesValue) {
