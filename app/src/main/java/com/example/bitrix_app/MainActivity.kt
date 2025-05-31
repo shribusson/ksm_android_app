@@ -772,8 +772,40 @@ class MainViewModel : ViewModel() {
         val timeSpent = taskJson.optInt("timeSpentInLogs",
             taskJson.optInt("TIME_SPENT_IN_LOGS", 0))
 
-        // Удаляем парсинг UF_TASK_WEBDAV_FILES
-        // val fileIds = mutableListOf<String>() ...
+        // Возвращаем парсинг UF_TASK_WEBDAV_FILES
+        val fileIds = mutableListOf<String>()
+        val filesValue = taskJson.opt("UF_TASK_WEBDAV_FILES")
+        val currentTaskIdForLog = taskJson.optString("id", taskJson.optString("ID", fallbackId))
+        Timber.d("Task ID $currentTaskIdForLog: UF_TASK_WEBDAV_FILES raw value is '$filesValue' of type ${filesValue?.javaClass?.simpleName}")
+
+        when (filesValue) {
+            is JSONArray -> {
+                for (i in 0 until filesValue.length()) {
+                    val fileId = filesValue.optString(i)
+                    if (fileId.isNotEmpty()) {
+                        fileIds.add(fileId)
+                    }
+                }
+                Timber.d("Task ID $currentTaskIdForLog: Parsed ${fileIds.size} file IDs from JSONArray: $fileIds")
+            }
+            is String -> {
+                if (filesValue.isNotEmpty() && filesValue != "false") {
+                    fileIds.add(filesValue)
+                    Timber.w("Task ID $currentTaskIdForLog: UF_TASK_WEBDAV_FILES was a String '$filesValue'. Parsed as a single file ID.")
+                } else {
+                    Timber.d("Task ID $currentTaskIdForLog: UF_TASK_WEBDAV_FILES was an empty or 'false' string. No files.")
+                }
+            }
+            is Boolean -> {
+                Timber.d("Task ID $currentTaskIdForLog: UF_TASK_WEBDAV_FILES is boolean: $filesValue. No files.")
+            }
+            null -> {
+                 Timber.d("Task ID $currentTaskIdForLog: UF_TASK_WEBDAV_FILES is null. No files.")
+            }
+            else -> {
+                Timber.w("Task ID $currentTaskIdForLog: UF_TASK_WEBDAV_FILES has unexpected type: ${filesValue.javaClass.simpleName}. Value: '$filesValue'. Treating as no files.")
+            }
+        }
 
         return Task(
             id = taskJson.optString("id", taskJson.optString("ID", fallbackId)),
@@ -782,8 +814,8 @@ class MainViewModel : ViewModel() {
             timeSpent = timeSpent,
             timeEstimate = taskJson.optInt("timeEstimate", taskJson.optInt("TIME_ESTIMATE", 7200)),
             status = taskJson.optString("status", taskJson.optString("STATUS", "")),
-            changedDate = taskJson.optString("changedDate", taskJson.optString("CHANGED_DATE", null))
-            // attachedFileIds удален из конструктора
+            changedDate = taskJson.optString("changedDate", taskJson.optString("CHANGED_DATE", null)),
+            attachedFileIds = fileIds // Присваиваем распарсенные ID
         )
     }
 
