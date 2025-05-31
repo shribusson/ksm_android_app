@@ -2659,7 +2659,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                     isTimerRunningForThisTask = isTimerRunningForThisTask,
                     isTimerUserPausedForThisTask = isTimerUserPausedForThisTask,
                     isTimerSystemPausedForThisTask = isTimerSystemPausedForThisTask,
-                    viewModel = viewModel
+                    viewModel = viewModel,
+                    context = context // Передаем context
                 )
                 Spacer(modifier = Modifier.height(10.dp))
             }
@@ -2742,7 +2743,8 @@ fun TaskCard(
     isTimerRunningForThisTask: Boolean,
     isTimerUserPausedForThisTask: Boolean,
     isTimerSystemPausedForThisTask: Boolean,
-    viewModel: MainViewModel // Передаем ViewModel для доступа к данным и функциям
+    viewModel: MainViewModel, // Передаем ViewModel для доступа к данным и функциям
+    context: Context // Добавляем параметр context
 ) {
     // Используем состояние из ViewModel для раскрытия карточки
     val isExpanded = viewModel.expandedTaskIds.contains(task.id)
