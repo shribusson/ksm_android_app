@@ -2253,79 +2253,69 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                 }
             }
 
-            // Иконка статуса работы и меню настроек под ней
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally, // Центрируем иконку и кнопку настроек
-                verticalArrangement = Arrangement.Center
-            ) {
-                WorkStatusIcon(workStatus = viewModel.workStatus)
-                Spacer(modifier = Modifier.height(4.dp)) // Небольшой отступ между иконкой и кнопкой настроек
+            // Иконка статуса работы, которая теперь также является кнопкой настроек
+            Box {
+                // WorkStatusIcon теперь кликабельный и открывает меню
+                WorkStatusIcon(
+                    workStatus = viewModel.workStatus,
+                    modifier = Modifier.clickable { isSettingsExpanded = true }
+                )
 
-                // Кнопка настроек
-                Box {
-                    IconButton(
-                        onClick = { isSettingsExpanded = true },
-                        modifier = Modifier.size(48.dp) // Явно задаем размер для области касания
-                    ) {
-                        Text("⚙️", fontSize = 28.sp) // Увеличиваем иконку настроек
-                    }
-
-                    DropdownMenu(
-                        expanded = isSettingsExpanded,
-                        onDismissRequest = { isSettingsExpanded = false }
-                    ) {
-                        /* // Отключено согласно задаче - скрыть настройку отправки комментариев
-                        DropdownMenuItem(
-                            text = {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = if (viewModel.sendComments) "✓ " else "   ",
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text("Отправлять комментарии")
-                                }
-                            },
-                            onClick = {
-                                viewModel.toggleComments()
-                                isSettingsExpanded = false
+                DropdownMenu(
+                    expanded = isSettingsExpanded,
+                    onDismissRequest = { isSettingsExpanded = false }
+                ) {
+                    /* // Отключено согласно задаче - скрыть настройку отправки комментариев
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (viewModel.sendComments) "✓ " else "   ",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text("Отправлять комментарии")
                             }
-                        )
-                        */
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = if (viewModel.showCompletedTasks) "✓ " else "   ",
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text("Показывать завершенные (2 дня)")
-                                }
-                            },
-                            onClick = {
-                                viewModel.toggleShowCompletedTasks()
-                                isSettingsExpanded = false
+                        },
+                        onClick = {
+                            viewModel.toggleComments()
+                            isSettingsExpanded = false
+                        }
+                    )
+                    */
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = if (viewModel.showCompletedTasks) "✓ " else "   ",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text("Показывать завершенные (2 дня)")
                             }
-                        )
-                        Divider() // Разделитель
-                        DropdownMenuItem(
-                            text = { Text("Посмотреть логи (упрощенные)") },
-                            onClick = {
-                                onShowLogs()
-                                isSettingsExpanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Выгрузить подробные логи") },
-                            onClick = {
-                                viewModel.exportDetailedLogs(context) // Используем context из LocalContext.current
-                                isSettingsExpanded = false
-                            }
-                        )
-                    }
+                        },
+                        onClick = {
+                            viewModel.toggleShowCompletedTasks()
+                            isSettingsExpanded = false
+                        }
+                    )
+                    Divider() // Разделитель
+                    DropdownMenuItem(
+                        text = { Text("Посмотреть логи (упрощенные)") },
+                        onClick = {
+                            onShowLogs()
+                            isSettingsExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Выгрузить подробные логи") },
+                        onClick = {
+                            viewModel.exportDetailedLogs(context) // Используем context из LocalContext.current
+                            isSettingsExpanded = false
+                        }
+                    )
                 }
             }
         }
@@ -2535,7 +2525,7 @@ fun UserAvatar(user: User, size: Int) {
 }
 
 @Composable
-fun WorkStatusIcon(workStatus: WorkStatus) {
+fun WorkStatusIcon(workStatus: WorkStatus, modifier: Modifier = Modifier) { // Добавляем Modifier
     val scheme = MaterialTheme.colorScheme // Считываем схему один раз
     val (icon, color, contentColor) = remember(workStatus, scheme, StatusOrange, StatusRed) {
         when (workStatus) {
@@ -2551,7 +2541,7 @@ fun WorkStatusIcon(workStatus: WorkStatus) {
         text = icon,
         fontSize = 30.sp, // Увеличиваем иконку
         color = contentColor,
-        modifier = Modifier
+        modifier = modifier // Применяем переданный Modifier
             .shadow(elevation = 2.dp, shape = CircleShape) // Добавляем небольшую тень
             .background(color.copy(alpha = 0.2f), CircleShape)
             .padding(10.dp) // Увеличиваем отступ
