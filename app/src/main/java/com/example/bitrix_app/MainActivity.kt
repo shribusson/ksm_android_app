@@ -774,13 +774,41 @@ class MainViewModel : ViewModel() {
             taskJson.optInt("TIME_SPENT_IN_LOGS", 0))
 
         val fileIds = mutableListOf<String>()
-        val filesArray = taskJson.optJSONArray("UF_TASK_WEBDAV_FILES") // Поле с файлами
-        if (filesArray != null) {
-            for (i in 0 until filesArray.length()) {
-                val fileId = filesArray.optString(i)
-                if (fileId.isNotEmpty()) {
-                    fileIds.add(fileId)
+        val filesValue = taskJson.opt("UF_TASK_WEBDAV_FILES")
+        val currentTaskIdForLog = taskJson.optString("id", taskJson.optString("ID", fallbackId))
+        Timber.d("Task ID $currentTaskIdForLog: UF_TASK_WEBDAV_FILES raw value is '$filesValue' of type ${filesValue?.javaClass?.simpleName}")
+
+        when (filesValue) {
+            is JSONArray -> {
+                for (i in 0 until filesValue.length()) {
+                    val fileId = filesValue.optString(i)
+                    if (fileId.isNotEmpty()) {
+                        fileIds.add(fileId)
+                    }
                 }
+                Timber.d("Task ID $currentTaskIdForLog: Parsed ${fileIds.size} file IDs from JSONArray: $fileIds")
+            }
+            is String -> {
+                // Пользовательские поля типа "Файл (множественный)" обычно возвращают массив ID.
+                // Если приходит строка, это может быть либо ID одного файла (если поле не множественное, что нетипично для UF_TASK_WEBDAV_FILES),
+                // либо некорректное значение. Для UF_TASK_WEBDAV_FILES, которое является множественным, строка маловероятна, если есть файлы.
+                // Чаще всего, если файлов нет, будет `false`. Если есть один файл, будет массив с одним элементом.
+                // Оставим обработку строки на случай очень редких сценариев или других полей, но с предупреждением.
+                if (filesValue.isNotEmpty() && filesValue != "false") { // "false" как строка - тоже не ID
+                    fileIds.add(filesValue)
+                    Timber.w("Task ID $currentTaskIdForLog: UF_TASK_WEBDAV_FILES was a String '$filesValue'. Parsed as a single file ID. This is unusual for UF_TASK_WEBDAV_FILES.")
+                } else {
+                    Timber.d("Task ID $currentTaskIdForLog: UF_TASK_WEBDAV_FILES was an empty or 'false' string. No files.")
+                }
+            }
+            is Boolean -> { // Обычно false, если файлов нет
+                Timber.d("Task ID $currentTaskIdForLog: UF_TASK_WEBDAV_FILES is boolean: $filesValue. No files.")
+            }
+            null -> {
+                 Timber.d("Task ID $currentTaskIdForLog: UF_TASK_WEBDAV_FILES is null. No files.")
+            }
+            else -> { // Другие типы, например JSONObject, если что-то совсем не так
+                Timber.w("Task ID $currentTaskIdForLog: UF_TASK_WEBDAV_FILES has unexpected type: ${filesValue.javaClass.simpleName}. Value: '$filesValue'. Treating as no files.")
             }
         }
         // parentIdFromJson и actualParentId удалены
@@ -2748,6 +2776,7 @@ fun TaskCard(
 ) {
     // Используем состояние из ViewModel для раскрытия карточки
     val isExpanded = viewModel.expandedTaskIds.contains(task.id)
+    Timber.d("TaskCard for task ${task.id} ('${task.title}'): attachedFileIds = ${task.attachedFileIds}, isExpanded = $isExpanded")
 
     // Загрузка чек-листов и подзадач при раскрытии карточки
     LaunchedEffect(task.id, isExpanded) { // Ключ теперь isExpanded из ViewModel
@@ -2958,6 +2987,7 @@ fun TaskCard(
 
                 // Прикрепленные файлы
                 if (task.attachedFileIds.isNotEmpty()) {
+                    Timber.d("TaskCard for task ${task.id}: Displaying attached files section. Count: ${task.attachedFileIds.size}")
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = "Прикрепленные файлы:",
@@ -3020,6 +3050,8 @@ fun TaskCard(
                         }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
+                } else if (isExpanded) { // Логируем, только если карточка раскрыта, но файлов нет
+                    Timber.d("TaskCard for task ${task.id}: No attached files to display (task.attachedFileIds is empty), though card is expanded.")
                 }
             }
 
