@@ -384,9 +384,12 @@ class MainViewModel : ViewModel() {
                                 val twoDaysAgo = calendar.time
                                 val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                // Больше не фильтруем подзадачи на этом этапе, они будут в общем списке, если пользователь за них ответственен.
-                                val tasksForStatusFiltering = newRawTasksList // Ранее mainTasksOnlyList
-                                Timber.d("Raw tasks (all types): ${newRawTasksList.size}, Tasks before status/date filter: ${tasksForStatusFiltering.size} for user ${user.name} in loadTasks")
+                                // Отфильтровываем подзадачи из основного списка, оставляем только задачи без parentId
+                                val mainTasksOnlyList = newRawTasksList.filter { it.parentId == null }
+                                Timber.d("Raw tasks (all types): ${newRawTasksList.size}, Main tasks only (parentId is null): ${mainTasksOnlyList.size} for user ${user.name} in loadTasks")
+
+                                val tasksForStatusFiltering = mainTasksOnlyList
+                                Timber.d("Tasks for status/date filtering (main tasks only): ${tasksForStatusFiltering.size} for user ${user.name} in loadTasks")
 
                                 val filteredTasksList = tasksForStatusFiltering.filter { task ->
                                     if (!task.isCompleted) {
@@ -500,8 +503,12 @@ class MainViewModel : ViewModel() {
                                         val twoDaysAgo = calendar.time
                                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                        val tasksForStatusFilteringSimple = newRawTasksList // Ранее mainTasksOnlyList
-                                        Timber.d("Raw tasks (simple, all types): ${newRawTasksList.size}, Tasks before status/date filter (simple): ${tasksForStatusFilteringSimple.size} for user ${user.name}")
+                                        // Отфильтровываем подзадачи из основного списка в loadTasksSimple
+                                        val mainTasksOnlyListSimple = newRawTasksList.filter { it.parentId == null }
+                                        Timber.d("Raw tasks (simple, all types): ${newRawTasksList.size}, Main tasks only (simple, parentId is null): ${mainTasksOnlyListSimple.size} for user ${user.name}")
+
+                                        val tasksForStatusFilteringSimple = mainTasksOnlyListSimple
+                                        Timber.d("Tasks for status/date filtering (simple, main tasks only): ${tasksForStatusFilteringSimple.size} for user ${user.name}")
 
                                         val filteredTasksList = tasksForStatusFilteringSimple.filter { task ->
                                             if (!task.isCompleted) {
@@ -613,8 +620,12 @@ class MainViewModel : ViewModel() {
                                         val twoDaysAgo = calendar.time
                                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                        val tasksForStatusFilteringAlternative = newRawTasksList // Ранее mainTasksOnlyList
-                                        Timber.d("Raw tasks (alternative, all types): ${newRawTasksList.size}, Tasks before status/date filter (alternative): ${tasksForStatusFilteringAlternative.size} for user ${user.name}")
+                                        // Отфильтровываем подзадачи из основного списка в loadTasksAlternative
+                                        val mainTasksOnlyListAlternative = newRawTasksList.filter { it.parentId == null }
+                                        Timber.d("Raw tasks (alternative, all types): ${newRawTasksList.size}, Main tasks only (alternative, parentId is null): ${mainTasksOnlyListAlternative.size} for user ${user.name}")
+
+                                        val tasksForStatusFilteringAlternative = mainTasksOnlyListAlternative
+                                        Timber.d("Tasks for status/date filtering (alternative, main tasks only): ${tasksForStatusFilteringAlternative.size} for user ${user.name}")
 
                                         val filteredTasksList = tasksForStatusFilteringAlternative.filter { task ->
                                             if (!task.isCompleted) {
@@ -2905,11 +2916,12 @@ fun TaskCard(
                                         color = scheme.onSurfaceVariant // Используем scheme
                                     )
                                 }
-                                // Кнопка таймера для подзадачи
+                                // Кнопки действий для подзадачи
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End // Кнопку справа
+                                    horizontalArrangement = Arrangement.End, // Кнопки справа
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     val sState = viewModel.timerServiceState
                                     val isTimerRunningForThisSubtask = sState?.activeTaskId == subtask.id && !sState.isEffectivelyPaused
@@ -2954,6 +2966,26 @@ fun TaskCard(
                                             contentDescription = contentDescription,
                                             modifier = Modifier.size(24.dp)
                                         )
+                                    }
+
+                                    // Кнопка завершения для подзадачи (если не завершена)
+                                    if (!subtask.isCompleted) {
+                                        Spacer(modifier = Modifier.width(8.dp)) // Отступ между кнопками
+                                        val rememberedCompleteSubtask = remember(subtask) { { viewModel.completeTask(subtask) } }
+                                        IconButton(
+                                            onClick = rememberedCompleteSubtask,
+                                            modifier = Modifier.size(40.dp),
+                                            colors = IconButtonDefaults.iconButtonColors(
+                                                containerColor = ProgressBarGreen.copy(alpha = 0.15f),
+                                                contentColor = ProgressBarGreen // Цвет иконки
+                                            )
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Check,
+                                                contentDescription = "Завершить подзадачу",
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
