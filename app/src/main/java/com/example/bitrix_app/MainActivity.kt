@@ -384,12 +384,17 @@ class MainViewModel : ViewModel() {
                                 val twoDaysAgo = calendar.time
                                 val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                // Отфильтровываем подзадачи из основного списка, оставляем только задачи без parentId
-                                val mainTasksOnlyList = newRawTasksList.filter { it.parentId == null }
-                                Timber.d("Raw tasks (all types): ${newRawTasksList.size}, Main tasks only (parentId is null): ${mainTasksOnlyList.size} for user ${user.name} in loadTasks")
+                                // Фильтруем задачи для основного списка:
+                                // - Оставляем задачи без parentId (основные задачи)
+                                // - Оставляем подзадачи, если их родительская задача НЕ находится в newRawTasksList
+                                //   (т.е. пользователь ответственен за подзадачу, но не за ее родителя)
+                                val mainTasksOnlyList = newRawTasksList.filter { task ->
+                                    task.parentId == null || newRawTasksList.none { parentCandidate -> parentCandidate.id == task.parentId }
+                                }
+                                Timber.d("Raw tasks (all types): ${newRawTasksList.size}, Main displayable tasks: ${mainTasksOnlyList.size} for user ${user.name} in loadTasks")
 
                                 val tasksForStatusFiltering = mainTasksOnlyList
-                                Timber.d("Tasks for status/date filtering (main tasks only): ${tasksForStatusFiltering.size} for user ${user.name} in loadTasks")
+                                Timber.d("Tasks for status/date filtering (main displayable tasks): ${tasksForStatusFiltering.size} for user ${user.name} in loadTasks")
 
                                 val filteredTasksList = tasksForStatusFiltering.filter { task ->
                                     if (!task.isCompleted) {
@@ -503,12 +508,14 @@ class MainViewModel : ViewModel() {
                                         val twoDaysAgo = calendar.time
                                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                        // Отфильтровываем подзадачи из основного списка в loadTasksSimple
-                                        val mainTasksOnlyListSimple = newRawTasksList.filter { it.parentId == null }
-                                        Timber.d("Raw tasks (simple, all types): ${newRawTasksList.size}, Main tasks only (simple, parentId is null): ${mainTasksOnlyListSimple.size} for user ${user.name}")
+                                        // Аналогичная логика фильтрации для loadTasksSimple
+                                        val mainTasksOnlyListSimple = newRawTasksList.filter { task ->
+                                            task.parentId == null || newRawTasksList.none { parentCandidate -> parentCandidate.id == task.parentId }
+                                        }
+                                        Timber.d("Raw tasks (simple, all types): ${newRawTasksList.size}, Main displayable tasks (simple): ${mainTasksOnlyListSimple.size} for user ${user.name}")
 
                                         val tasksForStatusFilteringSimple = mainTasksOnlyListSimple
-                                        Timber.d("Tasks for status/date filtering (simple, main tasks only): ${tasksForStatusFilteringSimple.size} for user ${user.name}")
+                                        Timber.d("Tasks for status/date filtering (simple, main displayable tasks): ${tasksForStatusFilteringSimple.size} for user ${user.name}")
 
                                         val filteredTasksList = tasksForStatusFilteringSimple.filter { task ->
                                             if (!task.isCompleted) {
@@ -620,12 +627,14 @@ class MainViewModel : ViewModel() {
                                         val twoDaysAgo = calendar.time
                                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                        // Отфильтровываем подзадачи из основного списка в loadTasksAlternative
-                                        val mainTasksOnlyListAlternative = newRawTasksList.filter { it.parentId == null }
-                                        Timber.d("Raw tasks (alternative, all types): ${newRawTasksList.size}, Main tasks only (alternative, parentId is null): ${mainTasksOnlyListAlternative.size} for user ${user.name}")
+                                        // Аналогичная логика фильтрации для loadTasksAlternative
+                                        val mainTasksOnlyListAlternative = newRawTasksList.filter { task ->
+                                            task.parentId == null || newRawTasksList.none { parentCandidate -> parentCandidate.id == task.parentId }
+                                        }
+                                        Timber.d("Raw tasks (alternative, all types): ${newRawTasksList.size}, Main displayable tasks (alternative): ${mainTasksOnlyListAlternative.size} for user ${user.name}")
 
                                         val tasksForStatusFilteringAlternative = mainTasksOnlyListAlternative
-                                        Timber.d("Tasks for status/date filtering (alternative, main tasks only): ${tasksForStatusFilteringAlternative.size} for user ${user.name}")
+                                        Timber.d("Tasks for status/date filtering (alternative, main displayable tasks): ${tasksForStatusFilteringAlternative.size} for user ${user.name}")
 
                                         val filteredTasksList = tasksForStatusFilteringAlternative.filter { task ->
                                             if (!task.isCompleted) {
