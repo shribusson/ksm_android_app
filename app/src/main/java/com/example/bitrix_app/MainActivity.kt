@@ -127,6 +127,14 @@ data class ChecklistItem(
 // Enum AppThemeOptions удален, так как тема будет фиксированной
 
 // ViewModel
+
+// Вспомогательный data class для результата обработки задач в фоновом потоке
+data class TaskProcessingOutput(
+    val processedTasks: List<Task>,
+    val rawTaskCount: Int, // Для определения необходимости fallback
+    val processingError: String? = null // Ошибка, возникшая во время обработки
+)
+
 class MainViewModel : ViewModel() {
     private val client = OkHttpClient()
 
@@ -345,105 +353,117 @@ class MainViewModel : ViewModel() {
                     isLoading = false
                     if (response.isSuccessful) {
                         response.body?.let { body ->
-                            try {
-                                val responseText = body.string()
-                                // Timber.d("Load tasks API Response: $responseText") // Заменено на логирование длины
-                                Timber.d("Load tasks API Response: Received ${responseText.length} characters for user ${user.name}")
-
-                                val json = JSONObject(responseText)
-
-                                // Проверяем наличие ошибки в ответе
-                                if (json.has("error")) {
-                                    val error = json.getJSONObject("error")
-                                    errorMessage = "Ошибка API: ${error.optString("error_description", "Неизвестная ошибка")}"
-                                    Timber.w("API error in loadTasks: $errorMessage")
-                                    return@launch
-                                }
-
-                                val newRawTasksList = mutableListOf<Task>()
-
-                                // Обрабатываем результат
-                                if (json.has("result")) {
-                                    val result = json.get("result")
-                                    when (result) {
-                                        is JSONObject -> {
-                                            if (result.has("tasks")) {
-                                                processTasks(result.get("tasks"), newRawTasksList)
-                                            } else {
-                                                processTasks(result, newRawTasksList)
+                            val responseText = body.string() // Получаем текст ответа
+                            viewModelScope.launch { // Запускаем корутину для обработки и обновления UI
+                                try {
+                                    val output = withContext(Dispatchers.Default) {
+                                        // Вся обработка JSON и списков происходит в фоновом потоке
+                                        Timber.d("Load tasks (bg): Processing ${responseText.length} chars for user ${user.name}")
+                                        try {
+                                            val json = JSONObject(responseText)
+                                            if (json.has("error")) {
+                                                val error = json.getJSONObject("error")
+                                                val apiErrorMessage = "Ошибка API: ${error.optString("error_description", "Неизвестная ошибка")}"
+                                                Timber.w("API error in loadTasks (bg): $apiErrorMessage")
+                                                return@withContext TaskProcessingOutput(emptyList(), 0, apiErrorMessage)
                                             }
-                                        }
-                                        is JSONArray -> processTasks(result, newRawTasksList)
-                                    }
-                                }
 
-                                val calendar = Calendar.getInstance()
-                                calendar.add(Calendar.DAY_OF_YEAR, -2)
-                                val twoDaysAgo = calendar.time
-                                val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
-
-                                // Фильтрация по parentId больше не нужна, все задачи из newRawTasksList считаются основными
-                                val tasksForStatusFiltering = newRawTasksList
-                                Timber.d("Raw tasks (all types): ${newRawTasksList.size} for user ${user.name} in loadTasks. All are considered main tasks now.")
-
-                                val filteredTasksList = tasksForStatusFiltering.filter { task ->
-                                    if (!task.isCompleted) {
-                                        true // Всегда оставляем незавершенные задачи
-                                    } else { // Задача завершена
-                                        if (showCompletedTasks) { // Показываем завершенные только если флаг установлен
-                                            task.changedDate?.let { dateStr ->
-                                                try {
-                                                    val taskChangedDate = dateFormat.parse(dateStr)
-                                                    taskChangedDate != null && taskChangedDate.after(twoDaysAgo)
-                                                } catch (e: java.text.ParseException) {
-                                                    Timber.w(e, "Failed to parse changedDate '$dateStr' for completed task ${task.id} (title: '${task.title}'). Filtering out.")
-                                                    false
+                                            val newRawTasksList = mutableListOf<Task>()
+                                            if (json.has("result")) {
+                                                val result = json.get("result")
+                                                when (result) {
+                                                    is JSONObject -> {
+                                                        if (result.has("tasks")) {
+                                                            processTasks(result.get("tasks"), newRawTasksList)
+                                                        } else {
+                                                            processTasks(result, newRawTasksList)
+                                                        }
+                                                    }
+                                                    is JSONArray -> processTasks(result, newRawTasksList)
                                                 }
-                                            } ?: false
+                                            }
+
+                                            val calendar = Calendar.getInstance()
+                                            calendar.add(Calendar.DAY_OF_YEAR, -2)
+                                            val twoDaysAgo = calendar.time
+                                            val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+
+                                            val tasksForStatusFiltering = newRawTasksList
+                                            val filteredTasksList = tasksForStatusFiltering.filter { task ->
+                                                if (!task.isCompleted) true
+                                                else {
+                                                    if (showCompletedTasks) {
+                                                        task.changedDate?.let { dateStr ->
+                                                            try {
+                                                                val taskChangedDate = dateFormat.parse(dateStr)
+                                                                taskChangedDate != null && taskChangedDate.after(twoDaysAgo)
+                                                            } catch (e: java.text.ParseException) {
+                                                                Timber.w(e, "Failed to parse changedDate '$dateStr' for task ${task.id}. Filtering out.")
+                                                                false
+                                                            }
+                                                        } ?: false
+                                                    } else false
+                                                }
+                                            }
+                                            Timber.d("Raw tasks (bg): ${newRawTasksList.size}, Filtered (bg, showCompleted=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name}")
+
+                                            val newSortedTasksList = filteredTasksList.sortedWith(
+                                                compareBy<Task> { it.isCompleted }
+                                                    .thenByDescending { it.changedDate }
+                                                    .thenBy { it.id.toIntOrNull() ?: 0 }
+                                            )
+                                            TaskProcessingOutput(newSortedTasksList, newRawTasksList.size, null)
+                                        } catch (e: Exception) {
+                                            Timber.e(e, "Error during background task processing for user ${user.name}")
+                                            TaskProcessingOutput(emptyList(), 0, "Ошибка обработки данных: ${e.message}")
+                                        }
+                                    } // Конец withContext(Dispatchers.Default)
+
+                                    // Обновление UI на основном потоке
+                                    if (output.processingError != null) {
+                                        errorMessage = output.processingError
+                                        // Если основная загрузка вернула ошибку API и нет задач, пробуем fallback
+                                        if (tasks.isEmpty()) { // Проверяем, что это была основная загрузка (tasks еще не обновлены)
+                                            Timber.w("Primary loadTasks resulted in processing error '${output.processingError}' and no tasks currently displayed. Trying simple query.")
+                                            loadTasksSimple()
+                                        }
+                                    } else {
+                                        if (!areTaskListsFunctionallyEquivalent(output.processedTasks, tasks)) {
+                                            Timber.i("Task list for user ${user.name} has changed. Updating UI with ${output.processedTasks.size} tasks.")
+                                            tasks = output.processedTasks
                                         } else {
-                                            false // Скрываем все завершенные, если showCompletedTasks = false
+                                            Timber.i("Task list for user ${user.name} has not changed (${output.processedTasks.size} tasks). No UI update for tasks list.")
+                                        }
+                                        errorMessage = null // Очищаем ошибку при успехе
+
+                                        if (output.rawTaskCount == 0) {
+                                            Timber.w("No tasks found for user ${user.name} with primary query (raw list empty). Trying simple query.")
+                                            loadTasksSimple()
+                                        } else if (output.processedTasks.isEmpty() && tasks.isEmpty()) {
+                                            Timber.w("No displayable tasks for user ${user.name} after filtering in loadTasks. Current tasks list is also empty.")
                                         }
                                     }
+                                } catch (e: Exception) { // Ошибки от body.string() или другие ошибки на основном потоке
+                                    errorMessage = "Ошибка чтения ответа: ${e.message}"
+                                    Timber.e(e, "Error in loadTasks onResponse (main thread part) for user ${user.name}")
                                 }
-                                Timber.d("Raw tasks: ${newRawTasksList.size}, Filtered tasks (showCompletedTasks=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name} in loadTasks")
-
-                                val newSortedTasksList = filteredTasksList.sortedWith(
-                                    compareBy<Task> { it.isCompleted } // Активная задача обрабатывается в toggleTimer и отдельной карточке
-                                        .thenByDescending { it.changedDate } // Сначала новые по дате изменения
-                                        .thenBy { it.id.toIntOrNull() ?: 0 }
-                                )
-                                // Логика остановки таймера, если активная задача не принадлежит текущему пользователю, удалена,
-                                // чтобы таймер продолжал работать при смене пользователя.
-
-                                // Сравниваем новый отсортированный список с текущим списком задач
-                                if (!areTaskListsFunctionallyEquivalent(newSortedTasksList, tasks)) {
-                                    Timber.i("Task list for user ${user.name} has changed. Updating UI with ${newSortedTasksList.size} tasks.")
-                                    tasks = newSortedTasksList
-                                } else {
-                                    Timber.i("Task list for user ${user.name} has not changed (${newSortedTasksList.size} tasks). No UI update for tasks list.")
-                                }
-
-                                if (newRawTasksList.isEmpty()) { // Проверяем исходный список до фильтрации для решения о fallback
-                                    Timber.w("No tasks found for user ${user.name} with primary query (raw list empty). Trying simple query.")
-                                    loadTasksSimple()
-                                } else if (filteredTasksList.isEmpty() && tasks.isEmpty()) {
-                                    // Если после фильтрации ничего не осталось, а текущий список тоже пуст,
-                                    // можно сообщить, что нет актуальных задач, или попробовать fallback, если это желательно
-                                    Timber.w("No displayable tasks for user ${user.name} after filtering in loadTasks. Current tasks list is also empty.")
-                                    // Если newRawTasksList не был пуст, но filteredTasksList пуст, loadTasksSimple не будет вызван здесь.
-                                    // Это поведение можно изменить, если нужно пытаться загрузить simple/alternative,
-                                    // даже если primary query вернул задачи, но они все отфильтровались.
-                                    // Пока оставляем как есть: fallback только если API вернул пустой newRawTasksList.
-                                }
-
-                            } catch (e: Exception) {
-                                errorMessage = "Ошибка парсинга: ${e.message}"
-                                Timber.e(e, "Parse error in loadTasks for user ${user.name}")
+                            } // Конец viewModelScope.launch
+                        } ?: run { // response.body is null
+                             viewModelScope.launch {
+                                errorMessage = "Пустой ответ от сервера."
+                                Timber.w("Response body is null in loadTasks for user ${user.name}")
+                             }
+                        }
+                    } else { // response not successful
+                        viewModelScope.launch {
+                            errorMessage = "Ошибка сервера: ${response.code} - ${response.message}"
+                            Timber.e("HTTP error in loadTasks: ${response.code} - ${response.message}")
+                            // Если основная загрузка не удалась и нет задач, пробуем fallback
+                            if (tasks.isEmpty()) {
+                                Timber.w("Primary loadTasks HTTP error and no tasks currently displayed. Trying simple query.")
+                                loadTasksSimple()
                             }
                         }
-                    } else {
-                        errorMessage = "Ошибка сервера: ${response.code} - ${response.message}"
-                        Timber.e("HTTP error in loadTasks: ${response.code} - ${response.message}")
                     }
                 }
             }
@@ -470,93 +490,98 @@ class MainViewModel : ViewModel() {
             }
 
             override fun onResponse(call: Call, response: Response) {
-                viewModelScope.launch {
-                    if (response.isSuccessful) {
-                        response.body?.let { body ->
+                if (response.isSuccessful) {
+                    response.body?.let { body ->
+                        val responseText = body.string()
+                        viewModelScope.launch {
                             try {
-                                val responseText = body.string()
-                                // Timber.d("Simple API Response for user ${user.name}: $responseText") // Заменено на логирование длины
-                                Timber.d("Simple API Response: Received ${responseText.length} characters for user ${user.name}")
-
-                                val json = JSONObject(responseText)
-                                if (json.has("result")) {
-                                    val newRawTasksList = mutableListOf<Task>()
-                                    val result = json.get("result")
-
-                                    if (result is JSONObject && result.has("tasks")) {
-                                        processTasks(result.get("tasks"), newRawTasksList)
-                                    } else if (result is JSONArray) { // Если result это массив
-                                        processTasks(result, newRawTasksList)
-                                    } else if (result is JSONObject) { // Если result это объект задач
-                                        processTasks(result, newRawTasksList)
-                                    }
-
-
-                                    if (newRawTasksList.isNotEmpty()) {
-                                        val calendar = Calendar.getInstance()
-                                        calendar.add(Calendar.DAY_OF_YEAR, -2)
-                                        val twoDaysAgo = calendar.time
-                                        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
-
-                                        // Фильтрация по parentId больше не нужна
-                                        val tasksForStatusFilteringSimple = newRawTasksList
-                                        Timber.d("Raw tasks (simple, all types): ${newRawTasksList.size} for user ${user.name}. All considered main tasks.")
-
-                                        val filteredTasksList = tasksForStatusFilteringSimple.filter { task ->
-                                            if (!task.isCompleted) {
-                                                true
-                                            } else {
-                                                if (showCompletedTasks) {
-                                                    task.changedDate?.let { dateStr ->
-                                                        try {
-                                                            val taskChangedDate = dateFormat.parse(dateStr)
-                                                            taskChangedDate != null && taskChangedDate.after(twoDaysAgo)
-                                                        } catch (e: java.text.ParseException) {
-                                                            Timber.w(e, "Failed to parse changedDate '$dateStr' for completed task ${task.id} (title: '${task.title}'). Filtering out.")
-                                                            false
-                                                        }
-                                                    } ?: false
-                                                } else {
-                                                    false
-                                                }
+                                val output = withContext(Dispatchers.Default) {
+                                    Timber.d("Simple API Response (bg): Received ${responseText.length} chars for user ${user.name}")
+                                    try {
+                                        val json = JSONObject(responseText)
+                                        if (json.has("error")) { // Проверяем ошибку API внутри withContext
+                                            val error = json.getJSONObject("error")
+                                            val apiErrorMessage = "Ошибка API (simple): ${error.optString("error_description", "Неизвестная ошибка")}"
+                                            Timber.w("API error in loadTasksSimple (bg): $apiErrorMessage")
+                                            return@withContext TaskProcessingOutput(emptyList(), 0, apiErrorMessage)
+                                        }
+                                        if (json.has("result")) {
+                                            val newRawTasksList = mutableListOf<Task>()
+                                            val result = json.get("result")
+                                            // ... (логика processTasks как в оригинале)
+                                            if (result is JSONObject && result.has("tasks")) {
+                                                processTasks(result.get("tasks"), newRawTasksList)
+                                            } else if (result is JSONArray) {
+                                                processTasks(result, newRawTasksList)
+                                            } else if (result is JSONObject) {
+                                                processTasks(result, newRawTasksList)
                                             }
-                                        }
-                                        Timber.d("Raw tasks (simple): ${newRawTasksList.size}, Filtered tasks (simple, showCompletedTasks=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name}")
 
-                                        // val currentServiceState = timerServiceState // Больше не нужно для сортировки здесь
-                                        val newSortedTasksList = filteredTasksList.sortedWith(
-                                            compareBy<Task> { it.isCompleted }
-                                                .thenByDescending { it.changedDate }
-                                                .thenBy { it.id.toIntOrNull() ?: 0 }
-                                        )
-                                        // Логика остановки таймера, если активная задача не принадлежит текущему пользователю, удалена.
-
-                                        if (!areTaskListsFunctionallyEquivalent(newSortedTasksList, tasks)) {
-                                            Timber.i("Task list (simple) for user ${user.name} has changed. Updating UI with ${newSortedTasksList.size} tasks.")
-                                            tasks = newSortedTasksList
+                                            if (newRawTasksList.isNotEmpty()) {
+                                                val calendar = Calendar.getInstance()
+                                                calendar.add(Calendar.DAY_OF_YEAR, -2)
+                                                val twoDaysAgo = calendar.time
+                                                val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+                                                val filteredTasksList = newRawTasksList.filter { task ->
+                                                    if (!task.isCompleted) true
+                                                    else {
+                                                        if (showCompletedTasks) {
+                                                            task.changedDate?.let { dateStr ->
+                                                                try { dateFormat.parse(dateStr)?.after(twoDaysAgo) ?: false }
+                                                                catch (e: java.text.ParseException) { false }
+                                                            } ?: false
+                                                        } else false
+                                                    }
+                                                }
+                                                val newSortedTasksList = filteredTasksList.sortedWith(
+                                                    compareBy<Task> { it.isCompleted }
+                                                        .thenByDescending { it.changedDate }
+                                                        .thenBy { it.id.toIntOrNull() ?: 0 }
+                                                )
+                                                TaskProcessingOutput(newSortedTasksList, newRawTasksList.size, null)
+                                            } else {
+                                                TaskProcessingOutput(emptyList(), 0, null) // Нет сырых задач
+                                            }
                                         } else {
-                                            Timber.i("Task list (simple) for user ${user.name} has not changed (${newSortedTasksList.size} tasks). No UI update.")
+                                            Timber.w("Simple method response (bg) for user ${user.name} does not have 'result'.")
+                                            TaskProcessingOutput(emptyList(), 0, "Отсутствует 'result' в ответе (simple)")
                                         }
-                                        errorMessage = null // Сбрасываем ошибку, так как что-то загрузили (даже если отфильтровалось до 0)
-                                        Timber.i("Successfully processed ${newRawTasksList.size} raw tasks (simple), resulting in ${filteredTasksList.size} displayable tasks for user ${user.name}")
-
-                                    } else { // newRawTasksList is empty
-                                        Timber.w("Simple method yielded no raw tasks for user ${user.name}. Trying alternative.")
-                                        loadTasksAlternative()
+                                    } catch (e: Exception) {
+                                        Timber.e(e, "Simple parse error (bg) for user ${user.name}.")
+                                        TaskProcessingOutput(emptyList(), 0, "Ошибка парсинга (simple): ${e.message}")
                                     }
-                                } else { // No "result" in JSON
-                                     Timber.w("Simple method response for user ${user.name} does not have 'result'. Trying alternative.")
-                                     loadTasksAlternative()
+                                } // Конец withContext
+
+                                if (output.processingError != null) {
+                                    errorMessage = output.processingError // Показываем ошибку обработки
+                                    Timber.w("Processing error in loadTasksSimple: ${output.processingError}. Trying alternative.")
+                                    loadTasksAlternative() // Пробуем альтернативу при ошибке обработки
+                                } else if (output.rawTaskCount == 0) {
+                                    Timber.w("Simple method yielded no raw tasks for user ${user.name}. Trying alternative.")
+                                    loadTasksAlternative()
+                                } else {
+                                    if (!areTaskListsFunctionallyEquivalent(output.processedTasks, tasks)) {
+                                        Timber.i("Task list (simple) for user ${user.name} has changed. Updating UI with ${output.processedTasks.size} tasks.")
+                                        tasks = output.processedTasks
+                                    } else {
+                                        Timber.i("Task list (simple) for user ${user.name} has not changed (${output.processedTasks.size} tasks). No UI update.")
+                                    }
+                                    errorMessage = null
+                                    Timber.i("Successfully processed ${output.rawTaskCount} raw tasks (simple), resulting in ${output.processedTasks.size} displayable tasks for user ${user.name}")
                                 }
                             } catch (e: Exception) {
-                                Timber.e(e, "Simple parse error for user ${user.name}. Trying alternative.")
-                                // Пробуем альтернативный метод
-                                loadTasksAlternative()
+                                Timber.e(e, "Error in loadTasksSimple onResponse (main thread part) for user ${user.name}")
+                                errorMessage = "Ошибка чтения ответа (simple): ${e.message}"
+                                loadTasksAlternative() // Пробуем альтернативу при других ошибках
                             }
-                        }
-                    } else {
+                        } // Конец viewModelScope.launch
+                    } ?: viewModelScope.launch {
+                        Timber.w("Simple method response body is null for user ${user.name}. Trying alternative.")
+                        loadTasksAlternative()
+                    }
+                } else { // response not successful
+                    viewModelScope.launch {
                         Timber.w("Simple method HTTP error for user ${user.name}: ${response.code}. Trying alternative.")
-                        // Пробуем альтернативный метод
                         loadTasksAlternative()
                     }
                 }
@@ -585,98 +610,111 @@ class MainViewModel : ViewModel() {
             }
 
             override fun onResponse(call: Call, response: Response) {
-                viewModelScope.launch {
-                    if (response.isSuccessful) {
-                        response.body?.let { body ->
+                if (response.isSuccessful) {
+                    response.body?.let { body ->
+                        val responseText = body.string()
+                        viewModelScope.launch {
                             try {
-                                val responseText = body.string()
-                                // Timber.d("Alternative API Response for user ${user.name}: $responseText") // Заменено на логирование длины
-                                Timber.d("Alternative API Response: Received ${responseText.length} characters for user ${user.name}")
+                                val output = withContext(Dispatchers.Default) {
+                                    Timber.d("Alternative API Response (bg): Received ${responseText.length} chars for user ${user.name}")
+                                    try {
+                                        val json = JSONObject(responseText)
+                                        if (json.has("error")) { // Проверяем ошибку API внутри withContext
+                                            val error = json.getJSONObject("error")
+                                            val apiErrorMessage = "Ошибка API (alternative): ${error.optString("error_description", "Неизвестная ошибка")}"
+                                            Timber.w("API error in loadTasksAlternative (bg): $apiErrorMessage")
+                                            return@withContext TaskProcessingOutput(emptyList(), 0, apiErrorMessage)
+                                        }
 
-                                val json = JSONObject(responseText)
-                                if (json.has("result")) {
-                                    val newRawTasksList = mutableListOf<Task>()
-                                    val result = json.get("result")
-
-                                    if (result is JSONObject && result.has("tasks")) {
-                                        processTasks(result.get("tasks"), newRawTasksList)
-                                    } else if (result is JSONArray) {
-                                        processTasks(result, newRawTasksList)
-                                    } else if (result is JSONObject) {
-                                        processTasks(result, newRawTasksList)
-                                    }
-
-                                    if (newRawTasksList.isNotEmpty()) {
-                                        val calendar = Calendar.getInstance()
-                                        calendar.add(Calendar.DAY_OF_YEAR, -2)
-                                        val twoDaysAgo = calendar.time
-                                        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
-
-                                        // Фильтрация по parentId больше не нужна
-                                        val tasksForStatusFilteringAlternative = newRawTasksList
-                                        Timber.d("Raw tasks (alternative, all types): ${newRawTasksList.size} for user ${user.name}. All considered main tasks.")
-
-                                        val filteredTasksList = tasksForStatusFilteringAlternative.filter { task ->
-                                            if (!task.isCompleted) {
-                                                true
-                                            } else {
-                                                if (showCompletedTasks) {
-                                                    task.changedDate?.let { dateStr ->
-                                                        try {
-                                                            val taskChangedDate = dateFormat.parse(dateStr)
-                                                            taskChangedDate != null && taskChangedDate.after(twoDaysAgo)
-                                                        } catch (e: java.text.ParseException) {
-                                                            Timber.w(e, "Failed to parse changedDate '$dateStr' for completed task ${task.id} (title: '${task.title}'). Filtering out.")
-                                                            false
-                                                        }
-                                                    } ?: false
-                                                } else {
-                                                    false
-                                                }
+                                        if (json.has("result")) {
+                                            val newRawTasksList = mutableListOf<Task>()
+                                            val result = json.get("result")
+                                            // ... (логика processTasks как в оригинале)
+                                            if (result is JSONObject && result.has("tasks")) {
+                                                processTasks(result.get("tasks"), newRawTasksList)
+                                            } else if (result is JSONArray) {
+                                                processTasks(result, newRawTasksList)
+                                            } else if (result is JSONObject) {
+                                                processTasks(result, newRawTasksList)
                                             }
-                                        }
-                                        Timber.d("Raw tasks (alternative): ${newRawTasksList.size}, Filtered tasks (alternative, showCompletedTasks=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name}")
 
-                                        // val currentServiceState = timerServiceState // Больше не нужно для сортировки здесь
-                                        val newSortedTasksList = filteredTasksList.sortedWith(
-                                            compareBy<Task> { it.isCompleted }
-                                                .thenByDescending { it.changedDate }
-                                                .thenBy { it.id.toIntOrNull() ?: 0 }
-                                        )
-
-                                        if (!areTaskListsFunctionallyEquivalent(newSortedTasksList, tasks)) {
-                                            Timber.i("Task list (alternative) for user ${user.name} has changed. Updating UI with ${newSortedTasksList.size} tasks.")
-                                            tasks = newSortedTasksList
+                                            if (newRawTasksList.isNotEmpty()) {
+                                                val calendar = Calendar.getInstance()
+                                                calendar.add(Calendar.DAY_OF_YEAR, -2)
+                                                val twoDaysAgo = calendar.time
+                                                val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+                                                val filteredTasksList = newRawTasksList.filter { task ->
+                                                    if (!task.isCompleted) true
+                                                    else {
+                                                        if (showCompletedTasks) {
+                                                            task.changedDate?.let { dateStr ->
+                                                                try { dateFormat.parse(dateStr)?.after(twoDaysAgo) ?: false }
+                                                                catch (e: java.text.ParseException) { false }
+                                                            } ?: false
+                                                        } else false
+                                                    }
+                                                }
+                                                val newSortedTasksList = filteredTasksList.sortedWith(
+                                                    compareBy<Task> { it.isCompleted }
+                                                        .thenByDescending { it.changedDate }
+                                                        .thenBy { it.id.toIntOrNull() ?: 0 }
+                                                )
+                                                TaskProcessingOutput(newSortedTasksList, newRawTasksList.size, null)
+                                            } else {
+                                                TaskProcessingOutput(emptyList(), 0, null) // Нет сырых задач
+                                            }
                                         } else {
-                                            Timber.i("Task list (alternative) for user ${user.name} has not changed (${newSortedTasksList.size} tasks). No UI update.")
+                                            Timber.w("Alternative method response (bg) for user ${user.name} does not have 'result'.")
+                                            TaskProcessingOutput(emptyList(), 0, "Отсутствует 'result' в ответе (alternative)")
                                         }
-                                        errorMessage = null // Сбрасываем ошибку, так как что-то загрузили
-                                        Timber.i("Successfully processed ${newRawTasksList.size} raw tasks (alternative), resulting in ${filteredTasksList.size} displayable tasks for user ${user.name}")
-
-                                        if (filteredTasksList.isEmpty() && tasks.isEmpty()) { // Если и после фильтрации пусто, и текущий список пуст
-                                            errorMessage = "Актуальные задачи не найдены для пользователя ${user.name}."
-                                        }
-                                    } else { // newRawTasksList is empty
-                                        Timber.w("Alternative method also yielded no raw tasks for user ${user.name}.")
-                                        if (tasks.isEmpty()) {
-                                            errorMessage = "Задачи не найдены для пользователя ${user.name}."
-                                        }
+                                    } catch (e: Exception) {
+                                        Timber.e(e, "Alternative parse error (bg) for user ${user.name}.")
+                                        TaskProcessingOutput(emptyList(), 0, "Ошибка парсинга (alternative): ${e.message}")
                                     }
-                                } else { // No "result" in JSON
-                                    Timber.w("Alternative method response for user ${user.name} does not have 'result'.")
-                                    if (tasks.isEmpty()) {
-                                        errorMessage = "Ошибка загрузки задач или задачи отсутствуют для пользователя ${user.name}."
+                                } // Конец withContext
+
+                                if (output.processingError != null) {
+                                    errorMessage = output.processingError
+                                    if (tasks.isEmpty()) { // Если и после этого нет задач, показываем ошибку
+                                         errorMessage = "Не удалось загрузить задачи: ${output.processingError}"
+                                    }
+                                } else if (output.rawTaskCount == 0) {
+                                    Timber.w("Alternative method also yielded no raw tasks for user ${user.name}.")
+                                    if (tasks.isEmpty()) { // Только если текущий список задач пуст
+                                        errorMessage = "Задачи не найдены для пользователя ${user.name}."
+                                    }
+                                } else {
+                                    if (!areTaskListsFunctionallyEquivalent(output.processedTasks, tasks)) {
+                                        Timber.i("Task list (alternative) for user ${user.name} has changed. Updating UI with ${output.processedTasks.size} tasks.")
+                                        tasks = output.processedTasks
+                                    } else {
+                                        Timber.i("Task list (alternative) for user ${user.name} has not changed (${output.processedTasks.size} tasks). No UI update.")
+                                    }
+                                    errorMessage = null
+                                    Timber.i("Successfully processed ${output.rawTaskCount} raw tasks (alternative), resulting in ${output.processedTasks.size} displayable tasks for user ${user.name}")
+                                    if (output.processedTasks.isEmpty() && tasks.isEmpty()) {
+                                        errorMessage = "Актуальные задачи не найдены для пользователя ${user.name}."
                                     }
                                 }
                             } catch (e: Exception) {
-                                Timber.e(e, "Alternative parse error for user ${user.name}")
+                                Timber.e(e, "Error in loadTasksAlternative onResponse (main thread part) for user ${user.name}")
                                 if (tasks.isEmpty()) {
-                                     errorMessage = "Ошибка обработки задач для ${user.name}."
+                                    errorMessage = "Ошибка чтения ответа (alternative): ${e.message}"
                                 }
                             }
+                        } // Конец viewModelScope.launch
+                    } ?: viewModelScope.launch {
+                        Timber.w("Alternative method response body is null for user ${user.name}.")
+                        if (tasks.isEmpty()) {
+                            errorMessage = "Пустой ответ от сервера (alternative)."
                         }
-                    } else {
-                         Timber.w("Alternative method HTTP error for user ${user.name}: ${response.code}.")
+                    }
+                } else { // response not successful
+                    viewModelScope.launch {
+                        Timber.w("Alternative method HTTP error for user ${user.name}: ${response.code}.")
+                        if (tasks.isEmpty()) {
+                            errorMessage = "Ошибка сервера (alternative): ${response.code}."
+                        }
                     }
                 }
             }
