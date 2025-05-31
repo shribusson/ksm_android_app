@@ -2712,81 +2712,8 @@ fun TaskCard(
                     Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ
                 }
 
-                // Подробная информация о времени
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp), // Небольшая тень для вложенной карточки
-                    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface) // Используем elevatedCardColors
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp) // Уменьшим отступ для вложенной карточки
-                    ) {
-                        Text(
-                            text = "⏱️ Временные показатели",
-                            fontSize = 16.sp, // Увеличиваем шрифт
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(12.dp)) // Увеличиваем отступ
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column {
-                                Text(
-                                    text = "Потрачено:",
-                                    fontSize = 14.sp, // Увеличиваем шрифт
-                                    color = scheme.onSurfaceVariant // Используем scheme
-                                )
-                                val spentTimeColor = remember(task.isOverdue, scheme.error, ProgressBarGreen) {
-                                    if (task.isOverdue) scheme.error else ProgressBarGreen
-                                }
-                                Text(
-                                    text = "${task.timeSpent / 3600}:${String.format("%02d", (task.timeSpent % 3600) / 60)}",
-                                    fontSize = 16.sp, // Увеличиваем шрифт
-                                    fontWeight = FontWeight.Bold,
-                                    color = spentTimeColor
-                                )
-                            }
-
-                            Column {
-                                Text(
-                                    text = "Планируется:",
-                                    fontSize = 14.sp, // Увеличиваем шрифт
-                                    color = scheme.onSurfaceVariant // Используем scheme
-                                )
-                                Text(
-                                    text = "${task.timeEstimate / 3600}:${String.format("%02d", (task.timeEstimate % 3600) / 60)}",
-                                    fontSize = 16.sp, // Увеличиваем шрифт
-                                    fontWeight = FontWeight.Bold,
-                                    color = scheme.primary // Используем scheme
-                                )
-                            }
-
-                            Column {
-                                Text(
-                                    text = "Процент:",
-                                    fontSize = 14.sp, // Увеличиваем шрифт
-                                    color = scheme.onSurfaceVariant // Используем scheme
-                                )
-                                val detailedProgressColor = remember(task.progressPercent, ProgressBarRed, ProgressBarOrange, ProgressBarGreen) {
-                                    when {
-                                        task.progressPercent >= 100 -> ProgressBarRed
-                                        task.progressPercent >= 80 -> ProgressBarOrange
-                                        else -> ProgressBarGreen
-                                    }
-                                }
-                                Text(
-                                    text = "${task.progressPercent}%",
-                                    fontSize = 16.sp, // Увеличиваем шрифт
-                                    fontWeight = FontWeight.Bold,
-                                    color = detailedProgressColor
-                                )
-                            }
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ
+                // Подробная информация о времени (УДАЛЕНО)
+                // Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ (УДАЛЕНО)
 
                 // Чек-листы
                 val checklist = viewModel.checklistsMap[task.id]
