@@ -2750,7 +2750,9 @@ fun TaskCard(
                 viewModel.fetchChecklistForTask(task.id)
             }
             // Загрузка прикрепленных файлов через disk.attachedObject.getlist
-            if (viewModel.attachedFilesMap[task.id] == null && viewModel.loadingAttachedFilesMap[task.id] != true) {
+            val shouldFetchFiles = viewModel.attachedFilesMap[task.id] == null && viewModel.loadingAttachedFilesMap[task.id] != true
+            Timber.d("TaskCard ${task.id} expanded. Files: attachedFilesMap[${task.id}] is null? ${viewModel.attachedFilesMap[task.id] == null}. loadingAttachedFilesMap[${task.id}]? ${viewModel.loadingAttachedFilesMap[task.id]}. Should fetch files? $shouldFetchFiles")
+            if (shouldFetchFiles) {
                 viewModel.fetchAttachedFilesForTask(task.id)
             }
         }
