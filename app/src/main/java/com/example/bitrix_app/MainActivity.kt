@@ -87,7 +87,8 @@ data class Task(
     val timeSpent: Int,
     val timeEstimate: Int,
     val status: String = "",
-    val changedDate: String? = null // Добавлено поле для даты изменения
+    val changedDate: String? = null, // Добавлено поле для даты изменения
+    val attachedFileIds: List<String> = emptyList() // ID прикрепленных файлов (UF_TASK_WEBDAV_FILES)
     // Поле isTimerRunning удалено, так как состояние таймера управляется в UserTimerData
     // parentId удален
 ) {
@@ -125,6 +126,23 @@ data class ChecklistItem(
     val title: String,
     val isComplete: Boolean
 )
+
+data class AttachedFile(
+    val id: String, // ID файла на диске
+    val name: String,
+    val downloadUrl: String,
+    val sizeBytes: Long
+) {
+    val formattedSize: String get() {
+        val kb = sizeBytes / 1024
+        val mb = kb / 1024
+        return when {
+            mb > 0 -> String.format("%.2f MB", mb.toFloat())
+            kb > 0 -> String.format("%d KB", kb)
+            else -> String.format("%d Bytes", sizeBytes)
+        }
+    }
+}
 
 // Enum AppThemeOptions удален, так как тема будет фиксированной
 
@@ -173,8 +191,13 @@ class MainViewModel : ViewModel() {
     // Состояния для чек-листов и подзадач
     var checklistsMap by mutableStateOf<Map<String, List<ChecklistItem>>>(emptyMap())
         private set
-    // subtasksMap удален
     var loadingChecklistMap by mutableStateOf<Map<String, Boolean>>(emptyMap())
+        private set
+
+    // Состояния для прикрепленных файлов
+    var fileDetailsMap by mutableStateOf<Map<String, AttachedFile>>(emptyMap()) // Map<fileId, AttachedFile>
+        private set
+    var loadingFilesForTaskMap by mutableStateOf<Map<String, Boolean>>(emptyMap()) // Map<taskId, isLoading>
         private set
     // loadingSubtasksMap удален
 
@@ -334,7 +357,8 @@ class MainViewModel : ViewModel() {
                 "&select[]=TIME_ESTIMATE" +
                 "&select[]=STATUS" +
                 "&select[]=RESPONSIBLE_ID" +
-                "&select[]=CHANGED_DATE" // Добавляем CHANGED_DATE
+                "&select[]=CHANGED_DATE" + // Добавляем CHANGED_DATE
+                "&select[]=UF_TASK_WEBDAV_FILES" // Добавляем поле для прикрепленных файлов
                 // PARENT_ID удален
 
         Timber.d("Loading tasks with URL: $url")
@@ -475,8 +499,8 @@ class MainViewModel : ViewModel() {
     // Простой метод загрузки без фильтров
     private fun loadTasksSimple() {
         val user = users[currentUserIndex]
-        // Добавляем CHANGED_DATE и в простой запрос, PARENT_ID удален
-        val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE"
+        // Добавляем CHANGED_DATE и UF_TASK_WEBDAV_FILES в простой запрос
+        val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=UF_TASK_WEBDAV_FILES"
 
         Timber.d("Trying simple URL with basic fields for user ${user.name}: $url")
 
@@ -597,7 +621,7 @@ class MainViewModel : ViewModel() {
         val url = "${user.webhookUrl}tasks.task.list" +
                 "?order[ID]=desc" + // Оставляем сортировку по ID для альтернативного варианта
                 // "&filter[CREATED_BY]=${user.userId}" + // Убираем фильтр по CREATED_BY, он может быть слишком строгим
-                "&select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE" // Добавляем CHANGED_DATE, PARENT_ID удален
+                "&select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=UF_TASK_WEBDAV_FILES" // Добавляем CHANGED_DATE и UF_TASK_WEBDAV_FILES
 
         Timber.d("Trying alternative URL for user ${user.name}: $url")
 
@@ -748,6 +772,17 @@ class MainViewModel : ViewModel() {
         // Timber.v("Creating task from JSON: ${taskJson.toString().take(100)}...") // Может быть слишком многословно
         val timeSpent = taskJson.optInt("timeSpentInLogs",
             taskJson.optInt("TIME_SPENT_IN_LOGS", 0))
+
+        val fileIds = mutableListOf<String>()
+        val filesArray = taskJson.optJSONArray("UF_TASK_WEBDAV_FILES") // Поле с файлами
+        if (filesArray != null) {
+            for (i in 0 until filesArray.length()) {
+                val fileId = filesArray.optString(i)
+                if (fileId.isNotEmpty()) {
+                    fileIds.add(fileId)
+                }
+            }
+        }
         // parentIdFromJson и actualParentId удалены
 
         return Task(
@@ -757,7 +792,8 @@ class MainViewModel : ViewModel() {
             timeSpent = timeSpent,
             timeEstimate = taskJson.optInt("timeEstimate", taskJson.optInt("TIME_ESTIMATE", 7200)),
             status = taskJson.optString("status", taskJson.optString("STATUS", "")),
-            changedDate = taskJson.optString("changedDate", taskJson.optString("CHANGED_DATE", null))
+            changedDate = taskJson.optString("changedDate", taskJson.optString("CHANGED_DATE", null)),
+            attachedFileIds = fileIds
             // parentId удален из конструктора
         )
     }
@@ -863,6 +899,78 @@ class MainViewModel : ViewModel() {
     }
 
     // fetchSubtasksForTask удален
+
+    fun fetchFileDetailsForTaskIfNeeded(task: Task) {
+        if (task.attachedFileIds.isEmpty()) {
+            // Timber.d("No attached file IDs for task ${task.id}. Skipping fetchFileDetails.")
+            return
+        }
+
+        val idsToFetch = task.attachedFileIds.filter { !fileDetailsMap.containsKey(it) }
+        if (idsToFetch.isEmpty()) {
+            // Timber.d("All file details already fetched for task ${task.id}. Attached: ${task.attachedFileIds.size}, In map: ${fileDetailsMap.keys.intersect(task.attachedFileIds.toSet()).size}")
+            return
+        }
+
+        Timber.i("Fetching details for ${idsToFetch.size} file(s) for task ${task.id}: $idsToFetch")
+        loadingFilesForTaskMap = loadingFilesForTaskMap + (task.id to true)
+        val user = users[currentUserIndex]
+
+        var url = "${user.webhookUrl}disk.file.getbatch?"
+        idsToFetch.forEachIndexed { index, fileId ->
+            url += "ID[$index]=$fileId&"
+        }
+        url = url.removeSuffix("&") // Убираем последний амперсанд
+
+        val request = Request.Builder().url(url).build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                viewModelScope.launch {
+                    Timber.e(e, "Failed to fetch file details for task ${task.id}")
+                    loadingFilesForTaskMap = loadingFilesForTaskMap - task.id
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                viewModelScope.launch {
+                    loadingFilesForTaskMap = loadingFilesForTaskMap - task.id
+                    if (response.isSuccessful) {
+                        response.body?.let { body ->
+                            try {
+                                val responseText = body.string()
+                                Timber.d("File details response for task ${task.id}: $responseText")
+                                val json = JSONObject(responseText)
+                                if (json.has("result")) {
+                                    val filesArrayJson = json.getJSONArray("result")
+                                    val newFileDetails = mutableMapOf<String, AttachedFile>()
+                                    for (i in 0 until filesArrayJson.length()) {
+                                        val fileJson = filesArrayJson.getJSONObject(i)
+                                        val fileId = fileJson.getString("ID")
+                                        newFileDetails[fileId] = AttachedFile(
+                                            id = fileId,
+                                            name = fileJson.getString("NAME"),
+                                            downloadUrl = fileJson.getString("DOWNLOAD_URL"),
+                                            sizeBytes = fileJson.getString("SIZE").toLongOrNull() ?: 0L
+                                        )
+                                    }
+                                    fileDetailsMap = fileDetailsMap + newFileDetails
+                                    Timber.i("Fetched and mapped ${newFileDetails.size} file details for task ${task.id}.")
+                                } else if (json.has("error")) {
+                                    val errorDesc = json.optString("error_description", "Unknown API error")
+                                    Timber.w("API error fetching file details for task ${task.id}: $errorDesc")
+                                }
+                            } catch (e: Exception) {
+                                Timber.e(e, "Error parsing file details for task ${task.id}")
+                            }
+                        }
+                    } else {
+                        Timber.w("Failed to fetch file details for task ${task.id}. Code: ${response.code}")
+                    }
+                }
+            }
+        })
+    }
+
 
     fun toggleChecklistItemStatus(taskId: String, checklistItemId: String, currentIsComplete: Boolean) {
         val user = users[currentUserIndex]
@@ -2646,6 +2754,15 @@ fun TaskCard(
             if (viewModel.checklistsMap[task.id].isNullOrEmpty() && viewModel.loadingChecklistMap[task.id] != true) {
                 viewModel.fetchChecklistForTask(task.id)
             }
+            if (task.attachedFileIds.isNotEmpty() && viewModel.loadingFilesForTaskMap[task.id] != true) {
+                // Проверяем, нужно ли загружать детали для каких-либо файлов этой задачи
+                val hasFilesToLoadDetailsFor = task.attachedFileIds.any { fileId ->
+                    !viewModel.fileDetailsMap.containsKey(fileId)
+                }
+                if (hasFilesToLoadDetailsFor) {
+                    viewModel.fetchFileDetailsForTaskIfNeeded(task)
+                }
+            }
             // Вызов fetchSubtasksForTask удален
         }
     }
@@ -2836,6 +2953,72 @@ fun TaskCard(
                 }
 
                 // Подзадачи - секция полностью удалена
+
+                // Прикрепленные файлы
+                if (task.attachedFileIds.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Прикрепленные файлы:",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    val isLoadingFileDetailsForThisTask = viewModel.loadingFilesForTaskMap[task.id] == true
+
+                    task.attachedFileIds.forEach { fileId ->
+                        val fileDetail = viewModel.fileDetailsMap[fileId]
+                        if (fileDetail != null) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        try {
+                                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                                data = android.net.Uri.parse(fileDetail.downloadUrl)
+                                            }
+                                            context.startActivity(intent)
+                                        } catch (e: Exception) {
+                                            Timber.e(e, "Could not open file URL: ${fileDetail.downloadUrl}")
+                                            // Можно показать Toast или Snackbar с ошибкой
+                                        }
+                                    }
+                                    .padding(vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_attachment), // Замените на свою иконку файла
+                                    contentDescription = "Файл",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = fileDetail.name,
+                                    fontSize = 16.sp,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = fileDetail.formattedSize,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        } else if (isLoadingFileDetailsForThisTask) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Загрузка деталей файла ID: $fileId...", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else {
+                            // Детали еще не загружены и загрузка не идет (например, если fetchFileDetailsForTaskIfNeeded еще не вызывался или была ошибка)
+                             Text("Файл ID: $fileId (детали не загружены)", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
             }
 
             // Spacer(modifier = Modifier.height(16.dp)) // Этот Spacer, кажется, лишний здесь, был между подзадачами и кнопками. Убираем, если он относился к подзадачам.
