@@ -384,11 +384,11 @@ class MainViewModel : ViewModel() {
                                 val twoDaysAgo = calendar.time
                                 val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                // Сначала отфильтровываем подзадачи из основного списка
-                                val mainTasksOnlyList = newRawTasksList.filter { it.parentId == null }
-                                Timber.d("Raw tasks (all types): ${newRawTasksList.size}, Main tasks only (parentId is null): ${mainTasksOnlyList.size} for user ${user.name} in loadTasks")
+                                // Больше не фильтруем подзадачи на этом этапе, они будут в общем списке, если пользователь за них ответственен.
+                                val tasksForStatusFiltering = newRawTasksList // Ранее mainTasksOnlyList
+                                Timber.d("Raw tasks (all types): ${newRawTasksList.size}, Tasks before status/date filter: ${tasksForStatusFiltering.size} for user ${user.name} in loadTasks")
 
-                                val filteredTasksList = mainTasksOnlyList.filter { task ->
+                                val filteredTasksList = tasksForStatusFiltering.filter { task ->
                                     if (!task.isCompleted) {
                                         true // Всегда оставляем незавершенные задачи
                                     } else { // Задача завершена
@@ -500,10 +500,10 @@ class MainViewModel : ViewModel() {
                                         val twoDaysAgo = calendar.time
                                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                        val mainTasksOnlyList = newRawTasksList.filter { it.parentId == null }
-                                        Timber.d("Raw tasks (simple, all types): ${newRawTasksList.size}, Main tasks only (simple, parentId is null): ${mainTasksOnlyList.size} for user ${user.name}")
+                                        val tasksForStatusFilteringSimple = newRawTasksList // Ранее mainTasksOnlyList
+                                        Timber.d("Raw tasks (simple, all types): ${newRawTasksList.size}, Tasks before status/date filter (simple): ${tasksForStatusFilteringSimple.size} for user ${user.name}")
 
-                                        val filteredTasksList = mainTasksOnlyList.filter { task ->
+                                        val filteredTasksList = tasksForStatusFilteringSimple.filter { task ->
                                             if (!task.isCompleted) {
                                                 true
                                             } else {
@@ -613,10 +613,10 @@ class MainViewModel : ViewModel() {
                                         val twoDaysAgo = calendar.time
                                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                        val mainTasksOnlyList = newRawTasksList.filter { it.parentId == null }
-                                        Timber.d("Raw tasks (alternative, all types): ${newRawTasksList.size}, Main tasks only (alternative, parentId is null): ${mainTasksOnlyList.size} for user ${user.name}")
+                                        val tasksForStatusFilteringAlternative = newRawTasksList // Ранее mainTasksOnlyList
+                                        Timber.d("Raw tasks (alternative, all types): ${newRawTasksList.size}, Tasks before status/date filter (alternative): ${tasksForStatusFilteringAlternative.size} for user ${user.name}")
 
-                                        val filteredTasksList = mainTasksOnlyList.filter { task ->
+                                        val filteredTasksList = tasksForStatusFilteringAlternative.filter { task ->
                                             if (!task.isCompleted) {
                                                 true
                                             } else {
