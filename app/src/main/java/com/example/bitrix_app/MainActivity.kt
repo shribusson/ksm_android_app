@@ -87,8 +87,8 @@ data class Task(
     val timeSpent: Int,
     val timeEstimate: Int,
     val status: String = "",
-    val changedDate: String? = null // Добавлено поле для даты изменения
-    // attachedFileIds удалено, т.к. будем получать список AttachedFile напрямую через disk.attachedObject.getlist
+    val changedDate: String? = null, // Добавлено поле для даты изменения
+    val attachedFileIds: List<String> = emptyList() // ID прикрепленных файлов (UF_TASK_WEBDAV_FILES)
     // Поле isTimerRunning удалено, так как состояние таймера управляется в UserTimerData
     // parentId удален
 ) {
@@ -195,9 +195,9 @@ class MainViewModel : ViewModel() {
         private set
 
     // Состояния для прикрепленных файлов
-    var attachedFilesMap by mutableStateOf<Map<String, List<AttachedFile>>>(emptyMap()) // Map<taskId, List<AttachedFile>>
+    var fileDetailsMap by mutableStateOf<Map<String, AttachedFile>>(emptyMap()) // Map<fileId, AttachedFile>
         private set
-    var loadingAttachedFilesMap by mutableStateOf<Map<String, Boolean>>(emptyMap()) // Map<taskId, isLoading>
+    var loadingFilesForTaskMap by mutableStateOf<Map<String, Boolean>>(emptyMap()) // Map<taskId, isLoading>
         private set
 
     // Состояния для записи аудио
@@ -356,8 +356,8 @@ class MainViewModel : ViewModel() {
                 "&select[]=TIME_ESTIMATE" +
                 "&select[]=STATUS" +
                 "&select[]=RESPONSIBLE_ID" +
-                "&select[]=CHANGED_DATE" // Добавляем CHANGED_DATE
-                // UF_TASK_WEBDAV_FILES удален из select
+                "&select[]=CHANGED_DATE" + // Добавляем CHANGED_DATE
+                "&select[]=UF_TASK_WEBDAV_FILES" // Возвращаем поле для прикрепленных файлов
                 // PARENT_ID удален
 
         Timber.d("Loading tasks with URL: $url")
@@ -498,8 +498,8 @@ class MainViewModel : ViewModel() {
     // Простой метод загрузки без фильтров
     private fun loadTasksSimple() {
         val user = users[currentUserIndex]
-        // UF_TASK_WEBDAV_FILES удален из select
-        val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE"
+        // Возвращаем UF_TASK_WEBDAV_FILES в простой запрос
+        val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=UF_TASK_WEBDAV_FILES"
 
         Timber.d("Trying simple URL with basic fields for user ${user.name}: $url")
 
@@ -620,7 +620,7 @@ class MainViewModel : ViewModel() {
         val url = "${user.webhookUrl}tasks.task.list" +
                 "?order[ID]=desc" + // Оставляем сортировку по ID для альтернативного варианта
                 // "&filter[CREATED_BY]=${user.userId}" + // Убираем фильтр по CREATED_BY, он может быть слишком строгим
-                "&select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE" // UF_TASK_WEBDAV_FILES удален
+                "&select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=UF_TASK_WEBDAV_FILES" // Возвращаем UF_TASK_WEBDAV_FILES
 
         Timber.d("Trying alternative URL for user ${user.name}: $url")
 
@@ -889,75 +889,69 @@ class MainViewModel : ViewModel() {
 
     // fetchSubtasksForTask удален
 
-    fun fetchAttachedFilesForTask(taskId: String) {
-        if (attachedFilesMap.containsKey(taskId) || loadingAttachedFilesMap[taskId] == true) {
-            Timber.d("Attached files for task $taskId already fetched or currently loading. Skipping.")
+    fun fetchFileDetailsForTaskIfNeeded(task: Task) {
+        if (task.attachedFileIds.isEmpty()) {
             return
         }
 
-        Timber.i("Fetching attached files for task $taskId using disk.attachedObject.getlist")
-        loadingAttachedFilesMap = loadingAttachedFilesMap + (taskId to true)
+        val idsToFetch = task.attachedFileIds.filter { !fileDetailsMap.containsKey(it) }
+        if (idsToFetch.isEmpty()) {
+            return
+        }
+
+        Timber.i("Fetching details for ${idsToFetch.size} file(s) for task ${task.id}: $idsToFetch using disk.file.getbatch")
+        loadingFilesForTaskMap = loadingFilesForTaskMap + (task.id to true)
         val user = users[currentUserIndex]
 
-        // Используем disk.attachedObject.getlist
-        val url = "${user.webhookUrl}disk.attachedObject.getlist?ENTITY_ID=$taskId&ENTITY_TYPE=TASK"
-        // Можно добавить &MODULE_ID=tasks, если это необходимо для вашего Bitrix24, но обычно ENTITY_TYPE=TASK достаточно.
+        var url = "${user.webhookUrl}disk.file.getbatch?"
+        idsToFetch.forEachIndexed { index, fileId ->
+            url += "ID[$index]=$fileId&"
+        }
+        url = url.removeSuffix("&")
 
         val request = Request.Builder().url(url).build()
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 viewModelScope.launch {
-                    Timber.e(e, "Failed to fetch attached files for task $taskId")
-                    loadingAttachedFilesMap = loadingAttachedFilesMap - taskId
-                    attachedFilesMap = attachedFilesMap + (taskId to emptyList()) // Сохраняем пустой список при ошибке сети
+                    Timber.e(e, "Failed to fetch file details for task ${task.id}")
+                    loadingFilesForTaskMap = loadingFilesForTaskMap - task.id
                 }
             }
 
             override fun onResponse(call: Call, response: Response) {
                 viewModelScope.launch {
-                    loadingAttachedFilesMap = loadingAttachedFilesMap - taskId
+                    loadingFilesForTaskMap = loadingFilesForTaskMap - task.id
                     if (response.isSuccessful) {
                         response.body?.let { body ->
                             try {
                                 val responseText = body.string()
-                                Timber.d("disk.attachedObject.getlist response for task $taskId: $responseText")
+                                Timber.d("disk.file.getbatch response for task ${task.id}: $responseText")
                                 val json = JSONObject(responseText)
-                                val taskFilesList = mutableListOf<AttachedFile>()
                                 if (json.has("result")) {
                                     val filesArrayJson = json.getJSONArray("result")
+                                    val newFileDetails = mutableMapOf<String, AttachedFile>()
                                     for (i in 0 until filesArrayJson.length()) {
                                         val fileJson = filesArrayJson.getJSONObject(i)
-                                        // ID файла на диске - это OBJECT_ID
-                                        val objectId = fileJson.optString("OBJECT_ID") // Используем OBJECT_ID как ID файла
-                                        if (objectId.isNotEmpty()) {
-                                            taskFilesList.add(
-                                                AttachedFile(
-                                                    id = objectId, // Это ID файла на диске
-                                                    name = fileJson.getString("NAME"),
-                                                    downloadUrl = fileJson.getString("DOWNLOAD_URL"),
-                                                    sizeBytes = fileJson.getString("SIZE").toLongOrNull() ?: 0L
-                                                )
-                                            )
-                                        }
+                                        val fileId = fileJson.getString("ID") // ID из disk.file.getbatch это ID самого файла
+                                        newFileDetails[fileId] = AttachedFile(
+                                            id = fileId,
+                                            name = fileJson.getString("NAME"),
+                                            downloadUrl = fileJson.getString("DOWNLOAD_URL"),
+                                            sizeBytes = fileJson.getString("SIZE").toLongOrNull() ?: 0L
+                                        )
                                     }
-                                    attachedFilesMap = attachedFilesMap + (taskId to taskFilesList)
-                                    Timber.i("Fetched ${taskFilesList.size} attached files for task $taskId.")
+                                    fileDetailsMap = fileDetailsMap + newFileDetails // Добавляем новые детали к существующим
+                                    Timber.i("Fetched and mapped ${newFileDetails.size} file details for task ${task.id}.")
                                 } else if (json.has("error")) {
                                     val errorDesc = json.optString("error_description", "Unknown API error")
-                                    Timber.w("API error fetching attached files for task $taskId: $errorDesc")
-                                    attachedFilesMap = attachedFilesMap + (taskId to emptyList())
-                                } else {
-                                    Timber.d("No 'result' or 'error' in successful response for attached files, task $taskId. Assuming no files.")
-                                    attachedFilesMap = attachedFilesMap + (taskId to emptyList())
+                                    Timber.w("API error fetching file details for task ${task.id} via getbatch: $errorDesc")
                                 }
                             } catch (e: Exception) {
-                                Timber.e(e, "Error parsing attached files for task $taskId")
-                                attachedFilesMap = attachedFilesMap + (taskId to emptyList())
+                                Timber.e(e, "Error parsing file details for task ${task.id} from getbatch")
                             }
                         }
                     } else {
-                        Timber.w("Failed to fetch attached files for task $taskId. Code: ${response.code}")
-                        attachedFilesMap = attachedFilesMap + (taskId to emptyList())
+                        Timber.w("Failed to fetch file details for task ${task.id} via getbatch. Code: ${response.code}")
                     }
                 }
             }
@@ -2740,20 +2734,24 @@ fun TaskCard(
 ) {
     // Используем состояние из ViewModel для раскрытия карточки
     val isExpanded = viewModel.expandedTaskIds.contains(task.id)
-    Timber.d("TaskCard for task ${task.id} ('${task.title}'), isExpanded = $isExpanded") // Удален attachedFileIds из лога
+    Timber.d("TaskCard for task ${task.id} ('${task.title}'), attachedFileIds: ${task.attachedFileIds}, isExpanded = $isExpanded")
 
-    // Загрузка чек-листов и прикрепленных файлов при раскрытии карточки
+    // Загрузка чек-листов и деталей файлов при раскрытии карточки
     LaunchedEffect(task.id, isExpanded) {
         if (isExpanded) {
             // Загрузка чек-листа
             if (viewModel.checklistsMap[task.id].isNullOrEmpty() && viewModel.loadingChecklistMap[task.id] != true) {
                 viewModel.fetchChecklistForTask(task.id)
             }
-            // Загрузка прикрепленных файлов через disk.attachedObject.getlist
-            val shouldFetchFiles = viewModel.attachedFilesMap[task.id] == null && viewModel.loadingAttachedFilesMap[task.id] != true
-            Timber.d("TaskCard ${task.id} expanded. Files: attachedFilesMap[${task.id}] is null? ${viewModel.attachedFilesMap[task.id] == null}. loadingAttachedFilesMap[${task.id}]? ${viewModel.loadingAttachedFilesMap[task.id]}. Should fetch files? $shouldFetchFiles")
-            if (shouldFetchFiles) {
-                viewModel.fetchAttachedFilesForTask(task.id)
+            // Загрузка деталей прикрепленных файлов
+            if (task.attachedFileIds.isNotEmpty() && viewModel.loadingFilesForTaskMap[task.id] != true) {
+                val hasFilesToLoadDetailsFor = task.attachedFileIds.any { fileId ->
+                    !viewModel.fileDetailsMap.containsKey(fileId)
+                }
+                Timber.d("TaskCard ${task.id} expanded. Files: attachedFileIds count ${task.attachedFileIds.size}. loadingFilesForTaskMap[${task.id}]? ${viewModel.loadingFilesForTaskMap[task.id]}. Has files to load details for? $hasFilesToLoadDetailsFor")
+                if (hasFilesToLoadDetailsFor) {
+                    viewModel.fetchFileDetailsForTaskIfNeeded(task)
+                }
             }
         }
     }
@@ -2946,30 +2944,22 @@ fun TaskCard(
                 // Подзадачи - секция полностью удалена
 
                 // Прикрепленные файлы
-                val attachedFilesForThisTask = viewModel.attachedFilesMap[task.id]
-                val isLoadingAttachedFiles = viewModel.loadingAttachedFilesMap[task.id] == true
+                if (isExpanded && task.attachedFileIds.isNotEmpty()) {
+                    Timber.d("TaskCard for task ${task.id}: Displaying attached files section. File ID count: ${task.attachedFileIds.size}")
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Прикрепленные файлы:",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
 
-                if (isExpanded) { // Показываем секцию файлов только если карточка раскрыта
-                    if (isLoadingAttachedFiles) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Загрузка прикрепленных файлов...", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Spacer(modifier = Modifier.height(16.dp))
-                    } else if (!attachedFilesForThisTask.isNullOrEmpty()) {
-                        Timber.d("TaskCard for task ${task.id}: Displaying attached files section. Count: ${attachedFilesForThisTask.size}")
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Прикрепленные файлы:",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
+                    val isLoadingFileDetailsForThisTask = viewModel.loadingFilesForTaskMap[task.id] == true
 
-                        attachedFilesForThisTask.forEach { fileDetail ->
+                    task.attachedFileIds.forEach { fileId ->
+                        val fileDetail = viewModel.fileDetailsMap[fileId]
+                        if (fileDetail != null) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
@@ -3005,16 +2995,20 @@ fun TaskCard(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                        }
-                        Spacer(modifier = Modifier.height(16.dp))
-                    } else { // Файлы не загружаются, и список пуст или null (ошибка загрузки или нет файлов)
-                        if (attachedFilesForThisTask != null && attachedFilesForThisTask.isEmpty()) {
-                             Timber.d("TaskCard for task ${task.id}: No attached files found after fetch.")
-                             // Можно добавить Text("Нет прикрепленных файлов") если нужно явное сообщение
-                        } else if (attachedFilesForThisTask == null && !isLoadingAttachedFiles) {
-                            Timber.d("TaskCard for task ${task.id}: Attached files list is null and not loading (fetch not attempted or failed).")
+                        } else if (isLoadingFileDetailsForThisTask) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Загрузка деталей файла ID: $fileId...", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else {
+                             Text("Файл ID: $fileId (детали не загружены)", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
+                             Timber.d("TaskCard for task ${task.id}: File ID $fileId details not found in map and not loading.")
                         }
                     }
+                    Spacer(modifier = Modifier.height(16.dp))
+                } else if (isExpanded && task.attachedFileIds.isEmpty()) {
+                    Timber.d("TaskCard for task ${task.id}: No attached file IDs to display, though card is expanded.")
                 }
             }
 
