@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.ExpandLess // Для иконки 
 import androidx.compose.material.icons.filled.ExpandMore // Для иконки "развернуть"
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause // Для иконки паузы
+import androidx.compose.material.icons.filled.Add // Для кнопки выпадающего списка быстрых задач
 import androidx.compose.material.icons.filled.PlayArrow // Для иконки старт/продолжить
 import androidx.compose.material.icons.filled.Refresh // Для кнопки "Обновить"
 import androidx.compose.material.icons.filled.Save // Для иконки сохранения (дискета)
@@ -143,6 +144,7 @@ class MainViewModel : ViewModel() {
     var errorMessage by mutableStateOf<String?>(null)
     var sendComments by mutableStateOf(false) // Настройка отправки комментариев (по умолчанию отключена)
     var showCompletedTasks by mutableStateOf(true) // Настройка отображения завершенных задач
+    var quickTaskDisplayMode by mutableStateOf(QuickTaskDisplayMode.ICONS) // Режим отображения быстрых задач
 
     // Состояние раскрытия карточек задач
     var expandedTaskIds by mutableStateOf<Set<String>>(emptySet())
@@ -154,6 +156,8 @@ class MainViewModel : ViewModel() {
         FIX_MISTAKES("Исправление косяков", "🛠️"), // U+1F6E0
         UNEXPECTED("Неожиданная задача", "✨", "2") // U+2728, High priority
     }
+
+    enum class QuickTaskDisplayMode { ICONS, DROPDOWN }
 
     // Состояния для чек-листов и подзадач
     var checklistsMap by mutableStateOf<Map<String, List<ChecklistItem>>>(emptyMap())
@@ -195,9 +199,10 @@ class MainViewModel : ViewModel() {
         private set
 
 
-    // --- Управление SharedPreferences для currentUserIndex ---
+    // --- Управление SharedPreferences ---
     private val sharedPreferencesName = "BitrixAppPrefs"
     private val currentUserIndexKey = "currentUserIndex"
+    private val quickTaskDisplayModeKey = "quickTaskDisplayMode"
 
     private fun saveCurrentUserIndex(context: Context, index: Int) {
         val prefs = context.getSharedPreferences(sharedPreferencesName, Context.MODE_PRIVATE)
@@ -210,6 +215,25 @@ class MainViewModel : ViewModel() {
         val loadedIndex = prefs.getInt(currentUserIndexKey, 0)
         Timber.d("Loaded currentUserIndex: $loadedIndex")
         return if (loadedIndex >= 0 && loadedIndex < users.size) loadedIndex else 0
+    }
+
+    private fun saveQuickTaskDisplayMode(context: Context, mode: QuickTaskDisplayMode) {
+        val prefs = context.getSharedPreferences(sharedPreferencesName, Context.MODE_PRIVATE)
+        prefs.edit().putString(quickTaskDisplayModeKey, mode.name).apply()
+        Timber.d("Saved QuickTaskDisplayMode: ${mode.name}")
+    }
+
+    private fun loadQuickTaskDisplayMode(context: Context): QuickTaskDisplayMode {
+        val prefs = context.getSharedPreferences(sharedPreferencesName, Context.MODE_PRIVATE)
+        val modeName = prefs.getString(quickTaskDisplayModeKey, QuickTaskDisplayMode.ICONS.name)
+        return try {
+            QuickTaskDisplayMode.valueOf(modeName ?: QuickTaskDisplayMode.ICONS.name)
+        } catch (e: IllegalArgumentException) {
+            Timber.w(e, "Failed to parse QuickTaskDisplayMode, defaulting to ICONS.")
+            QuickTaskDisplayMode.ICONS
+        }.also {
+            Timber.d("Loaded QuickTaskDisplayMode: $it")
+        }
     }
     // --- Конец SharedPreferences ---
 
@@ -245,6 +269,7 @@ class MainViewModel : ViewModel() {
         if (isInitialized) return
         Timber.d("MainViewModel initializing with context...")
         currentUserIndex = loadCurrentUserIndex(context) // Загружаем сохраненный индекс
+        quickTaskDisplayMode = loadQuickTaskDisplayMode(context) // Загружаем режим отображения быстрых задач
         updateWorkStatus() // Важно вызвать до loadTasks, чтобы timeman статус был актуален
         loadTasks()
         startPeriodicUpdates()
@@ -1195,6 +1220,16 @@ class MainViewModel : ViewModel() {
         showCompletedTasks = !showCompletedTasks
         Timber.i("Show completed tasks toggled to: $showCompletedTasks. Reloading tasks.")
         loadTasks() // Перезагружаем задачи, чтобы применить новый фильтр
+    }
+
+    fun toggleQuickTaskDisplayMode(context: Context) {
+        quickTaskDisplayMode = if (quickTaskDisplayMode == QuickTaskDisplayMode.ICONS) {
+            QuickTaskDisplayMode.DROPDOWN
+        } else {
+            QuickTaskDisplayMode.ICONS
+        }
+        saveQuickTaskDisplayMode(context, quickTaskDisplayMode)
+        Timber.i("Quick task display mode toggled to: $quickTaskDisplayMode")
     }
 
     // startUniversalTimerLoop() удален
@@ -2188,8 +2223,8 @@ fun LogViewerScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) { // Добавлен параметр onShowLogs
-    // var isUserMenuExpanded by remember { mutableStateOf(false) } // Больше не нужно
     var isSettingsExpanded by remember { mutableStateOf(false) }
+    var isQuickTaskDropdownExpanded by remember { mutableStateOf(false) } // Для нового дропдауна быстрых задач
     val context = LocalContext.current // Получаем контекст здесь, в Composable области
 
     Column(
@@ -2234,21 +2269,50 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                 }
             }
 
-            // Иконки для быстрого создания задач
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp), // Увеличиваем расстояние между иконками
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                MainViewModel.StandardTaskType.values().forEach { taskType ->
+            // Блок для быстрых задач (иконки или выпадающий список)
+            if (viewModel.quickTaskDisplayMode == MainViewModel.QuickTaskDisplayMode.ICONS) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    MainViewModel.StandardTaskType.values().forEach { taskType ->
+                        IconButton(
+                            onClick = { viewModel.createStandardTask(taskType, context) },
+                            modifier = Modifier.size(56.dp)
+                        ) {
+                            Text(
+                                text = taskType.emoji,
+                                fontSize = 32.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            } else { // DROPDOWN mode
+                Box {
                     IconButton(
-                        onClick = { viewModel.createStandardTask(taskType, context) },
-                        modifier = Modifier.size(56.dp) // Увеличиваем размер кнопки
+                        onClick = { isQuickTaskDropdownExpanded = true },
+                        modifier = Modifier.size(56.dp)
                     ) {
-                        Text(
-                            text = taskType.emoji,
-                            fontSize = 32.sp, // Увеличиваем размер эмодзи
-                            textAlign = TextAlign.Center
+                        Icon(
+                            imageVector = Icons.Filled.Add,
+                            contentDescription = "Создать быструю задачу",
+                            modifier = Modifier.size(32.dp)
                         )
+                    }
+                    DropdownMenu(
+                        expanded = isQuickTaskDropdownExpanded,
+                        onDismissRequest = { isQuickTaskDropdownExpanded = false }
+                    ) {
+                        MainViewModel.StandardTaskType.values().forEach { taskType ->
+                            DropdownMenuItem(
+                                text = { Text("${taskType.emoji} ${taskType.titlePrefix}") },
+                                onClick = {
+                                    viewModel.createStandardTask(taskType, context)
+                                    isQuickTaskDropdownExpanded = false
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -2298,6 +2362,22 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                         },
                         onClick = {
                             viewModel.toggleShowCompletedTasks()
+                            isSettingsExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = if (viewModel.quickTaskDisplayMode == MainViewModel.QuickTaskDisplayMode.DROPDOWN) "✓ " else "   ",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text("Быстрые задачи: список")
+                            }
+                        },
+                        onClick = {
+                            viewModel.toggleQuickTaskDisplayMode(context)
                             isSettingsExpanded = false
                         }
                     )
