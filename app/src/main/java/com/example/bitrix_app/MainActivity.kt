@@ -142,6 +142,7 @@ class MainViewModel : ViewModel() {
     var isLoading by mutableStateOf(false)
     var errorMessage by mutableStateOf<String?>(null)
     var sendComments by mutableStateOf(false) // Настройка отправки комментариев (по умолчанию отключена)
+    var showCompletedTasks by mutableStateOf(true) // Настройка отображения завершенных задач
 
     // Состояние раскрытия карточек задач
     var expandedTaskIds by mutableStateOf<Set<String>>(emptySet())
@@ -358,20 +359,24 @@ class MainViewModel : ViewModel() {
 
                                 val filteredTasksList = newRawTasksList.filter { task ->
                                     if (!task.isCompleted) {
-                                        true // Keep all non-completed tasks
-                                    } else { // Task is completed
-                                        task.changedDate?.let { dateStr ->
-                                            try {
-                                                val taskChangedDate = dateFormat.parse(dateStr)
-                                                taskChangedDate != null && taskChangedDate.after(twoDaysAgo)
-                                            } catch (e: java.text.ParseException) {
-                                                Timber.w(e, "Failed to parse changedDate '$dateStr' for completed task ${task.id} (title: '${task.title}'). Filtering out.")
-                                                false // Filter out if date is unparseable
-                                            }
-                                        } ?: false // Filter out if changedDate is null for a completed task
+                                        true // Всегда оставляем незавершенные задачи
+                                    } else { // Задача завершена
+                                        if (showCompletedTasks) { // Показываем завершенные только если флаг установлен
+                                            task.changedDate?.let { dateStr ->
+                                                try {
+                                                    val taskChangedDate = dateFormat.parse(dateStr)
+                                                    taskChangedDate != null && taskChangedDate.after(twoDaysAgo)
+                                                } catch (e: java.text.ParseException) {
+                                                    Timber.w(e, "Failed to parse changedDate '$dateStr' for completed task ${task.id} (title: '${task.title}'). Filtering out.")
+                                                    false
+                                                }
+                                            } ?: false
+                                        } else {
+                                            false // Скрываем все завершенные, если showCompletedTasks = false
+                                        }
                                     }
                                 }
-                                Timber.d("Raw tasks: ${newRawTasksList.size}, Filtered tasks (completed within 2 days or not completed): ${filteredTasksList.size} for user ${user.name} in loadTasks")
+                                Timber.d("Raw tasks: ${newRawTasksList.size}, Filtered tasks (showCompletedTasks=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name} in loadTasks")
 
                                 val newSortedTasksList = filteredTasksList.sortedWith(
                                     compareBy<Task> { it.id != timerServiceState?.activeTaskId } // Используем ID из timerServiceState, безопасно
@@ -469,18 +474,22 @@ class MainViewModel : ViewModel() {
                                             if (!task.isCompleted) {
                                                 true
                                             } else {
-                                                task.changedDate?.let { dateStr ->
-                                                    try {
-                                                        val taskChangedDate = dateFormat.parse(dateStr)
-                                                        taskChangedDate != null && taskChangedDate.after(twoDaysAgo)
-                                                    } catch (e: java.text.ParseException) {
-                                                        Timber.w(e, "Failed to parse changedDate '$dateStr' for completed task ${task.id} (title: '${task.title}'). Filtering out.")
-                                                        false
-                                                    }
-                                                } ?: false
+                                                if (showCompletedTasks) {
+                                                    task.changedDate?.let { dateStr ->
+                                                        try {
+                                                            val taskChangedDate = dateFormat.parse(dateStr)
+                                                            taskChangedDate != null && taskChangedDate.after(twoDaysAgo)
+                                                        } catch (e: java.text.ParseException) {
+                                                            Timber.w(e, "Failed to parse changedDate '$dateStr' for completed task ${task.id} (title: '${task.title}'). Filtering out.")
+                                                            false
+                                                        }
+                                                    } ?: false
+                                                } else {
+                                                    false
+                                                }
                                             }
                                         }
-                                        Timber.d("Raw tasks (simple): ${newRawTasksList.size}, Filtered tasks (simple): ${filteredTasksList.size} for user ${user.name}")
+                                        Timber.d("Raw tasks (simple): ${newRawTasksList.size}, Filtered tasks (simple, showCompletedTasks=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name}")
 
                                         val currentServiceState = timerServiceState // Это TimerServiceState?
                                         val newSortedTasksList = filteredTasksList.sortedWith(
@@ -576,18 +585,22 @@ class MainViewModel : ViewModel() {
                                             if (!task.isCompleted) {
                                                 true
                                             } else {
-                                                task.changedDate?.let { dateStr ->
-                                                    try {
-                                                        val taskChangedDate = dateFormat.parse(dateStr)
-                                                        taskChangedDate != null && taskChangedDate.after(twoDaysAgo)
-                                                    } catch (e: java.text.ParseException) {
-                                                        Timber.w(e, "Failed to parse changedDate '$dateStr' for completed task ${task.id} (title: '${task.title}'). Filtering out.")
-                                                        false
-                                                    }
-                                                } ?: false
+                                                if (showCompletedTasks) {
+                                                    task.changedDate?.let { dateStr ->
+                                                        try {
+                                                            val taskChangedDate = dateFormat.parse(dateStr)
+                                                            taskChangedDate != null && taskChangedDate.after(twoDaysAgo)
+                                                        } catch (e: java.text.ParseException) {
+                                                            Timber.w(e, "Failed to parse changedDate '$dateStr' for completed task ${task.id} (title: '${task.title}'). Filtering out.")
+                                                            false
+                                                        }
+                                                    } ?: false
+                                                } else {
+                                                    false
+                                                }
                                             }
                                         }
-                                        Timber.d("Raw tasks (alternative): ${newRawTasksList.size}, Filtered tasks (alternative): ${filteredTasksList.size} for user ${user.name}")
+                                        Timber.d("Raw tasks (alternative): ${newRawTasksList.size}, Filtered tasks (alternative, showCompletedTasks=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name}")
 
                                         val currentServiceState = timerServiceState // Это TimerServiceState?
                                         val newSortedTasksList = filteredTasksList.sortedWith(
@@ -1176,6 +1189,12 @@ class MainViewModel : ViewModel() {
     fun toggleComments() {
         sendComments = !sendComments
         Timber.i("Send comments toggled to: $sendComments")
+    }
+
+    fun toggleShowCompletedTasks() {
+        showCompletedTasks = !showCompletedTasks
+        Timber.i("Show completed tasks toggled to: $showCompletedTasks. Reloading tasks.")
+        loadTasks() // Перезагружаем задачи, чтобы применить новый фильтр
     }
 
     // startUniversalTimerLoop() удален
@@ -2234,10 +2253,14 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                 }
             }
 
-            // Меню настроек и иконка статуса работы
-            Row(
-                verticalAlignment = Alignment.CenterVertically
+            // Иконка статуса работы и меню настроек под ней
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally, // Центрируем иконку и кнопку настроек
+                verticalArrangement = Arrangement.Center
             ) {
+                WorkStatusIcon(workStatus = viewModel.workStatus)
+                Spacer(modifier = Modifier.height(4.dp)) // Небольшой отступ между иконкой и кнопкой настроек
+
                 // Кнопка настроек
                 Box {
                     IconButton(
@@ -2271,9 +2294,23 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                             }
                         )
                         */
-                        // --- Пункты выбора темы удалены ---
-                        // Divider() // Разделитель перед другими опциями (если он был только для тем)
-
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = if (viewModel.showCompletedTasks) "✓ " else "   ",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text("Показывать завершенные (2 дня)")
+                                }
+                            },
+                            onClick = {
+                                viewModel.toggleShowCompletedTasks()
+                                isSettingsExpanded = false
+                            }
+                        )
+                        Divider() // Разделитель
                         DropdownMenuItem(
                             text = { Text("Посмотреть логи (упрощенные)") },
                             onClick = {
@@ -2290,13 +2327,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                         )
                     }
                 }
-
-                // Иконка статуса работы
-                WorkStatusIcon(workStatus = viewModel.workStatus)
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp)) // Увеличиваем отступ
+        Spacer(modifier = Modifier.height(16.dp)) // Уменьшаем отступ после верхней панели
 
         val serviceState = viewModel.timerServiceState // Получаем состояние из ViewModel (TimerServiceState?)
 
