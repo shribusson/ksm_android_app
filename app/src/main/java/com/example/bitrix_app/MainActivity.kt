@@ -85,7 +85,8 @@ data class Task(
     val timeSpent: Int,
     val timeEstimate: Int,
     val status: String = "",
-    val changedDate: String? = null // Добавлено поле для даты изменения
+    val changedDate: String? = null, // Добавлено поле для даты изменения
+    val parentId: String? = null // ID родительской задачи
     // Поле isTimerRunning удалено, так как состояние таймера управляется в UserTimerData
 ) {
     val progressPercent: Int get() = if (timeEstimate > 0) (timeSpent * 100 / timeEstimate) else 0
@@ -325,7 +326,8 @@ class MainViewModel : ViewModel() {
                 "&select[]=TIME_ESTIMATE" +
                 "&select[]=STATUS" +
                 "&select[]=RESPONSIBLE_ID" +
-                "&select[]=CHANGED_DATE" // Добавляем CHANGED_DATE
+                "&select[]=CHANGED_DATE" + // Добавляем CHANGED_DATE
+                "&select[]=PARENT_ID"      // Добавляем PARENT_ID
 
         Timber.d("Loading tasks with URL: $url")
 
@@ -382,7 +384,11 @@ class MainViewModel : ViewModel() {
                                 val twoDaysAgo = calendar.time
                                 val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                val filteredTasksList = newRawTasksList.filter { task ->
+                                // Сначала отфильтровываем подзадачи из основного списка
+                                val mainTasksOnlyList = newRawTasksList.filter { it.parentId == null }
+                                Timber.d("Raw tasks (all types): ${newRawTasksList.size}, Main tasks only (parentId is null): ${mainTasksOnlyList.size} for user ${user.name} in loadTasks")
+
+                                val filteredTasksList = mainTasksOnlyList.filter { task ->
                                     if (!task.isCompleted) {
                                         true // Всегда оставляем незавершенные задачи
                                     } else { // Задача завершена
@@ -450,8 +456,8 @@ class MainViewModel : ViewModel() {
     // Простой метод загрузки без фильтров
     private fun loadTasksSimple() {
         val user = users[currentUserIndex]
-        // Добавляем CHANGED_DATE и в простой запрос
-        val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE"
+        // Добавляем CHANGED_DATE и PARENT_ID и в простой запрос
+        val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=PARENT_ID"
 
         Timber.d("Trying simple URL with basic fields for user ${user.name}: $url")
 
@@ -495,7 +501,10 @@ class MainViewModel : ViewModel() {
                                         val twoDaysAgo = calendar.time
                                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                        val filteredTasksList = newRawTasksList.filter { task ->
+                                        val mainTasksOnlyList = newRawTasksList.filter { it.parentId == null }
+                                        Timber.d("Raw tasks (simple, all types): ${newRawTasksList.size}, Main tasks only (simple, parentId is null): ${mainTasksOnlyList.size} for user ${user.name}")
+
+                                        val filteredTasksList = mainTasksOnlyList.filter { task ->
                                             if (!task.isCompleted) {
                                                 true
                                             } else {
@@ -564,7 +573,7 @@ class MainViewModel : ViewModel() {
         val url = "${user.webhookUrl}tasks.task.list" +
                 "?order[ID]=desc" + // Оставляем сортировку по ID для альтернативного варианта
                 // "&filter[CREATED_BY]=${user.userId}" + // Убираем фильтр по CREATED_BY, он может быть слишком строгим
-                "&select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE" // Добавляем CHANGED_DATE
+                "&select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=PARENT_ID" // Добавляем CHANGED_DATE и PARENT_ID
 
         Timber.d("Trying alternative URL for user ${user.name}: $url")
 
@@ -606,7 +615,10 @@ class MainViewModel : ViewModel() {
                                         val twoDaysAgo = calendar.time
                                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                        val filteredTasksList = newRawTasksList.filter { task ->
+                                        val mainTasksOnlyList = newRawTasksList.filter { it.parentId == null }
+                                        Timber.d("Raw tasks (alternative, all types): ${newRawTasksList.size}, Main tasks only (alternative, parentId is null): ${mainTasksOnlyList.size} for user ${user.name}")
+
+                                        val filteredTasksList = mainTasksOnlyList.filter { task ->
                                             if (!task.isCompleted) {
                                                 true
                                             } else {
@@ -699,6 +711,10 @@ class MainViewModel : ViewModel() {
         // Timber.v("Creating task from JSON: ${taskJson.toString().take(100)}...") // Может быть слишком многословно
         val timeSpent = taskJson.optInt("timeSpentInLogs",
             taskJson.optInt("TIME_SPENT_IN_LOGS", 0))
+        val parentIdFromJson = taskJson.optString("parentId", taskJson.optString("PARENT_ID", null))
+        // Считаем "0" или пустую строку как отсутствие родителя
+        val actualParentId = if (parentIdFromJson == "0" || parentIdFromJson.isNullOrEmpty()) null else parentIdFromJson
+
 
         return Task(
             id = taskJson.optString("id", taskJson.optString("ID", fallbackId)),
@@ -707,7 +723,8 @@ class MainViewModel : ViewModel() {
             timeSpent = timeSpent,
             timeEstimate = taskJson.optInt("timeEstimate", taskJson.optInt("TIME_ESTIMATE", 7200)),
             status = taskJson.optString("status", taskJson.optString("STATUS", "")),
-            changedDate = taskJson.optString("changedDate", taskJson.optString("CHANGED_DATE", null))
+            changedDate = taskJson.optString("changedDate", taskJson.optString("CHANGED_DATE", null)),
+            parentId = actualParentId
         )
     }
 
