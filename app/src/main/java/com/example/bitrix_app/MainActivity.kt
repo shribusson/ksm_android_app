@@ -410,8 +410,7 @@ class MainViewModel : ViewModel() {
                                 Timber.d("Raw tasks: ${newRawTasksList.size}, Filtered tasks (showCompletedTasks=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name} in loadTasks")
 
                                 val newSortedTasksList = filteredTasksList.sortedWith(
-                                    compareBy<Task> { it.id != timerServiceState?.activeTaskId } // Используем ID из timerServiceState, безопасно
-                                        .thenBy { it.isCompleted }
+                                    compareBy<Task> { it.isCompleted } // Активная задача обрабатывается в toggleTimer и отдельной карточке
                                         .thenByDescending { it.changedDate } // Сначала новые по дате изменения
                                         .thenBy { it.id.toIntOrNull() ?: 0 }
                                 )
@@ -525,10 +524,9 @@ class MainViewModel : ViewModel() {
                                         }
                                         Timber.d("Raw tasks (simple): ${newRawTasksList.size}, Filtered tasks (simple, showCompletedTasks=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name}")
 
-                                        val currentServiceState = timerServiceState // Это TimerServiceState?
+                                        // val currentServiceState = timerServiceState // Больше не нужно для сортировки здесь
                                         val newSortedTasksList = filteredTasksList.sortedWith(
-                                            compareBy<Task> { it.id != currentServiceState?.activeTaskId } // Сравниваем с ID из сервиса, безопасно
-                                                .thenBy { it.isCompleted }
+                                            compareBy<Task> { it.isCompleted }
                                                 .thenByDescending { it.changedDate }
                                                 .thenBy { it.id.toIntOrNull() ?: 0 }
                                         )
@@ -639,10 +637,9 @@ class MainViewModel : ViewModel() {
                                         }
                                         Timber.d("Raw tasks (alternative): ${newRawTasksList.size}, Filtered tasks (alternative, showCompletedTasks=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name}")
 
-                                        val currentServiceState = timerServiceState // Это TimerServiceState?
+                                        // val currentServiceState = timerServiceState // Больше не нужно для сортировки здесь
                                         val newSortedTasksList = filteredTasksList.sortedWith(
-                                            compareBy<Task> { it.id != currentServiceState?.activeTaskId } // Сравниваем с ID из сервиса, безопасно
-                                                .thenBy { it.isCompleted }
+                                            compareBy<Task> { it.isCompleted }
                                                 .thenByDescending { it.changedDate }
                                                 .thenBy { it.id.toIntOrNull() ?: 0 }
                                         )
