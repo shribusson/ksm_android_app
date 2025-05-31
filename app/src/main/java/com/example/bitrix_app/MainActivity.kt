@@ -85,9 +85,9 @@ data class Task(
     val timeSpent: Int,
     val timeEstimate: Int,
     val status: String = "",
-    val changedDate: String? = null, // Добавлено поле для даты изменения
-    val parentId: String? = null // ID родительской задачи
+    val changedDate: String? = null // Добавлено поле для даты изменения
     // Поле isTimerRunning удалено, так как состояние таймера управляется в UserTimerData
+    // parentId удален
 ) {
     val progressPercent: Int get() = if (timeEstimate > 0) (timeSpent * 100 / timeEstimate) else 0
     val isOverdue: Boolean get() = progressPercent > 100
@@ -163,12 +163,10 @@ class MainViewModel : ViewModel() {
     // Состояния для чек-листов и подзадач
     var checklistsMap by mutableStateOf<Map<String, List<ChecklistItem>>>(emptyMap())
         private set
-    var subtasksMap by mutableStateOf<Map<String, List<Task>>>(emptyMap())
-        private set
+    // subtasksMap удален
     var loadingChecklistMap by mutableStateOf<Map<String, Boolean>>(emptyMap())
         private set
-    var loadingSubtasksMap by mutableStateOf<Map<String, Boolean>>(emptyMap())
-        private set
+    // loadingSubtasksMap удален
 
     // Состояния для записи аудио
     var currentRecordingTask by mutableStateOf<Task?>(null)
@@ -326,8 +324,8 @@ class MainViewModel : ViewModel() {
                 "&select[]=TIME_ESTIMATE" +
                 "&select[]=STATUS" +
                 "&select[]=RESPONSIBLE_ID" +
-                "&select[]=CHANGED_DATE" + // Добавляем CHANGED_DATE
-                "&select[]=PARENT_ID"      // Добавляем PARENT_ID
+                "&select[]=CHANGED_DATE" // Добавляем CHANGED_DATE
+                // PARENT_ID удален
 
         Timber.d("Loading tasks with URL: $url")
 
@@ -384,17 +382,9 @@ class MainViewModel : ViewModel() {
                                 val twoDaysAgo = calendar.time
                                 val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                // Фильтруем задачи для основного списка:
-                                // - Оставляем задачи без parentId (основные задачи)
-                                // - Оставляем подзадачи, если их родительская задача НЕ находится в newRawTasksList
-                                //   (т.е. пользователь ответственен за подзадачу, но не за ее родителя)
-                                val mainTasksOnlyList = newRawTasksList.filter { task ->
-                                    task.parentId == null || newRawTasksList.none { parentCandidate -> parentCandidate.id == task.parentId }
-                                }
-                                Timber.d("Raw tasks (all types): ${newRawTasksList.size}, Main displayable tasks: ${mainTasksOnlyList.size} for user ${user.name} in loadTasks")
-
-                                val tasksForStatusFiltering = mainTasksOnlyList
-                                Timber.d("Tasks for status/date filtering (main displayable tasks): ${tasksForStatusFiltering.size} for user ${user.name} in loadTasks")
+                                // Фильтрация по parentId больше не нужна, все задачи из newRawTasksList считаются основными
+                                val tasksForStatusFiltering = newRawTasksList
+                                Timber.d("Raw tasks (all types): ${newRawTasksList.size} for user ${user.name} in loadTasks. All are considered main tasks now.")
 
                                 val filteredTasksList = tasksForStatusFiltering.filter { task ->
                                     if (!task.isCompleted) {
@@ -463,8 +453,8 @@ class MainViewModel : ViewModel() {
     // Простой метод загрузки без фильтров
     private fun loadTasksSimple() {
         val user = users[currentUserIndex]
-        // Добавляем CHANGED_DATE и PARENT_ID и в простой запрос
-        val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=PARENT_ID"
+        // Добавляем CHANGED_DATE и в простой запрос, PARENT_ID удален
+        val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE"
 
         Timber.d("Trying simple URL with basic fields for user ${user.name}: $url")
 
@@ -508,14 +498,9 @@ class MainViewModel : ViewModel() {
                                         val twoDaysAgo = calendar.time
                                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                        // Аналогичная логика фильтрации для loadTasksSimple
-                                        val mainTasksOnlyListSimple = newRawTasksList.filter { task ->
-                                            task.parentId == null || newRawTasksList.none { parentCandidate -> parentCandidate.id == task.parentId }
-                                        }
-                                        Timber.d("Raw tasks (simple, all types): ${newRawTasksList.size}, Main displayable tasks (simple): ${mainTasksOnlyListSimple.size} for user ${user.name}")
-
-                                        val tasksForStatusFilteringSimple = mainTasksOnlyListSimple
-                                        Timber.d("Tasks for status/date filtering (simple, main displayable tasks): ${tasksForStatusFilteringSimple.size} for user ${user.name}")
+                                        // Фильтрация по parentId больше не нужна
+                                        val tasksForStatusFilteringSimple = newRawTasksList
+                                        Timber.d("Raw tasks (simple, all types): ${newRawTasksList.size} for user ${user.name}. All considered main tasks.")
 
                                         val filteredTasksList = tasksForStatusFilteringSimple.filter { task ->
                                             if (!task.isCompleted) {
@@ -585,7 +570,7 @@ class MainViewModel : ViewModel() {
         val url = "${user.webhookUrl}tasks.task.list" +
                 "?order[ID]=desc" + // Оставляем сортировку по ID для альтернативного варианта
                 // "&filter[CREATED_BY]=${user.userId}" + // Убираем фильтр по CREATED_BY, он может быть слишком строгим
-                "&select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=PARENT_ID" // Добавляем CHANGED_DATE и PARENT_ID
+                "&select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE" // Добавляем CHANGED_DATE, PARENT_ID удален
 
         Timber.d("Trying alternative URL for user ${user.name}: $url")
 
@@ -627,14 +612,9 @@ class MainViewModel : ViewModel() {
                                         val twoDaysAgo = calendar.time
                                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
 
-                                        // Аналогичная логика фильтрации для loadTasksAlternative
-                                        val mainTasksOnlyListAlternative = newRawTasksList.filter { task ->
-                                            task.parentId == null || newRawTasksList.none { parentCandidate -> parentCandidate.id == task.parentId }
-                                        }
-                                        Timber.d("Raw tasks (alternative, all types): ${newRawTasksList.size}, Main displayable tasks (alternative): ${mainTasksOnlyListAlternative.size} for user ${user.name}")
-
-                                        val tasksForStatusFilteringAlternative = mainTasksOnlyListAlternative
-                                        Timber.d("Tasks for status/date filtering (alternative, main displayable tasks): ${tasksForStatusFilteringAlternative.size} for user ${user.name}")
+                                        // Фильтрация по parentId больше не нужна
+                                        val tasksForStatusFilteringAlternative = newRawTasksList
+                                        Timber.d("Raw tasks (alternative, all types): ${newRawTasksList.size} for user ${user.name}. All considered main tasks.")
 
                                         val filteredTasksList = tasksForStatusFilteringAlternative.filter { task ->
                                             if (!task.isCompleted) {
@@ -728,10 +708,7 @@ class MainViewModel : ViewModel() {
         // Timber.v("Creating task from JSON: ${taskJson.toString().take(100)}...") // Может быть слишком многословно
         val timeSpent = taskJson.optInt("timeSpentInLogs",
             taskJson.optInt("TIME_SPENT_IN_LOGS", 0))
-        val parentIdFromJson = taskJson.optString("parentId", taskJson.optString("PARENT_ID", null))
-        // Считаем "0" или пустую строку как отсутствие родителя
-        val actualParentId = if (parentIdFromJson == "0" || parentIdFromJson.isNullOrEmpty()) null else parentIdFromJson
-
+        // parentIdFromJson и actualParentId удалены
 
         return Task(
             id = taskJson.optString("id", taskJson.optString("ID", fallbackId)),
@@ -740,8 +717,8 @@ class MainViewModel : ViewModel() {
             timeSpent = timeSpent,
             timeEstimate = taskJson.optInt("timeEstimate", taskJson.optInt("TIME_ESTIMATE", 7200)),
             status = taskJson.optString("status", taskJson.optString("STATUS", "")),
-            changedDate = taskJson.optString("changedDate", taskJson.optString("CHANGED_DATE", null)),
-            parentId = actualParentId
+            changedDate = taskJson.optString("changedDate", taskJson.optString("CHANGED_DATE", null))
+            // parentId удален из конструктора
         )
     }
 
@@ -845,61 +822,7 @@ class MainViewModel : ViewModel() {
         })
     }
 
-    fun fetchSubtasksForTask(taskId: String) {
-        val user = users[currentUserIndex]
-        loadingSubtasksMap = loadingSubtasksMap + (taskId to true)
-        Timber.d("Fetching subtasks for task $taskId for user ${user.name}")
-        // Запрашиваем основные поля для подзадач
-        val url = "${user.webhookUrl}tasks.task.list" +
-                "?filter[PARENT_ID]=$taskId" +
-                "&select[]=ID" +
-                "&select[]=TITLE" +
-                "&select[]=DESCRIPTION" +
-                "&select[]=TIME_SPENT_IN_LOGS" +
-                "&select[]=TIME_ESTIMATE" +
-                "&select[]=STATUS"
-
-        val request = Request.Builder().url(url).build()
-
-        client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                viewModelScope.launch {
-                    loadingSubtasksMap = loadingSubtasksMap - taskId
-                    Timber.e(e, "Failed to fetch subtasks for task $taskId")
-                }
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                viewModelScope.launch {
-                    loadingSubtasksMap = loadingSubtasksMap - taskId
-                    if (response.isSuccessful) {
-                        response.body?.let { body ->
-                            try {
-                                val responseText = body.string()
-                                Timber.d("Subtasks response for task $taskId: $responseText")
-                                val json = JSONObject(responseText)
-                                val subtasksList = mutableListOf<Task>()
-                                if (json.has("result")) {
-                                    val result = json.get("result")
-                                     // processTasks ожидает, что задачи могут быть в result.tasks или просто в result
-                                    val tasksDataToProcess = if (result is JSONObject && result.has("tasks")) {
-                                        result.get("tasks")
-                                    } else {
-                                        result
-                                    }
-                                    processTasks(tasksDataToProcess, subtasksList)
-                                }
-                                subtasksMap = subtasksMap + (taskId to subtasksList)
-                                Timber.i("Fetched ${subtasksList.size} subtasks for task $taskId.")
-                            } catch (e: Exception) {
-                                Timber.e(e, "Error parsing subtasks for task $taskId")
-                            }
-                        }
-                    }
-                }
-            }
-        })
-    }
+    // fetchSubtasksForTask удален
 
     fun toggleChecklistItemStatus(taskId: String, checklistItemId: String, currentIsComplete: Boolean) {
         val user = users[currentUserIndex]
@@ -2683,9 +2606,7 @@ fun TaskCard(
             if (viewModel.checklistsMap[task.id].isNullOrEmpty() && viewModel.loadingChecklistMap[task.id] != true) {
                 viewModel.fetchChecklistForTask(task.id)
             }
-            if (viewModel.subtasksMap[task.id].isNullOrEmpty() && viewModel.loadingSubtasksMap[task.id] != true) {
-                viewModel.fetchSubtasksForTask(task.id)
-            }
+            // Вызов fetchSubtasksForTask удален
         }
     }
     val scheme = MaterialTheme.colorScheme // Считываем схему один раз
@@ -2874,137 +2795,14 @@ fun TaskCard(
                     Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ
                 }
 
-                // Подзадачи
-                val subtasks = viewModel.subtasksMap[task.id]
-                // val isLoadingSubtasks = viewModel.loadingSubtasksMap[task.id] == true // Удалено
-                if (!subtasks.isNullOrEmpty()) {
-                    Text(
-                        text = "Подзадачи:",
-                        fontSize = 16.sp, // Увеличиваем шрифт
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(6.dp)) // Увеличиваем отступ
-                    subtasks.forEach { subtask ->
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp), // Уменьшим вертикальный отступ
-                            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)), // Используем elevatedCardColors
-                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp) // Минимальная тень для подзадач
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) { // Уменьшим отступ для подзадачи
-                                Text(
-                                    text = subtask.title,
-                                    fontSize = 16.sp, // Увеличиваем шрифт
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Spacer(modifier = Modifier.height(6.dp)) // Увеличиваем отступ
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    val subtaskStatusColor = remember(subtask.isCompleted, subtask.isInProgress, subtask.isPending, scheme, StatusOrange) {
-                                        when {
-                                            subtask.isCompleted -> scheme.tertiary
-                                            subtask.isInProgress -> scheme.primary
-                                            subtask.isPending -> StatusOrange
-                                            else -> scheme.onSurfaceVariant
-                                        }
-                                    }
-                                    Text(
-                                        text = "Статус: ${subtask.statusText}",
-                                        fontSize = 14.sp, // Увеличиваем шрифт
-                                        color = subtaskStatusColor
-                                    )
-                                    Text(
-                                        text = "Время: ${subtask.formattedTime}",
-                                        fontSize = 14.sp, // Увеличиваем шрифт
-                                        color = scheme.onSurfaceVariant // Используем scheme
-                                    )
-                                }
-                                // Кнопки действий для подзадачи
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End, // Кнопки справа
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    val sState = viewModel.timerServiceState
-                                    val isTimerRunningForThisSubtask = sState?.activeTaskId == subtask.id && !sState.isEffectivelyPaused
-                                    val isTimerUserPausedForThisSubtask = sState?.activeTaskId == subtask.id && sState.isUserPaused
-                                    val isTimerSystemPausedForThisSubtask = sState?.activeTaskId == subtask.id && sState.isSystemPaused
-
-                                    val subtaskTimerButtonColors = IconButtonDefaults.iconButtonColors( // Используем IconButtonColors
-                                        containerColor = when {
-                                            isTimerRunningForThisSubtask -> scheme.error.copy(alpha = 0.1f)
-                                            isTimerUserPausedForThisSubtask -> scheme.tertiary.copy(alpha = 0.1f)
-                                            isTimerSystemPausedForThisSubtask -> scheme.onSurface.copy(alpha = 0.05f)
-                                            else -> scheme.primary.copy(alpha = 0.1f)
-                                        },
-                                        contentColor = when {
-                                            isTimerRunningForThisSubtask -> scheme.error
-                                            isTimerUserPausedForThisSubtask -> scheme.tertiary
-                                            isTimerSystemPausedForThisSubtask -> scheme.onSurface.copy(alpha = 0.6f)
-                                            else -> scheme.primary
-                                        }
-                                    )
-
-                                    IconButton(
-                                        onClick = { viewModel.toggleTimer(subtask) },
-                                        enabled = !isTimerSystemPausedForThisSubtask,
-                                        colors = subtaskTimerButtonColors,
-                                        modifier = Modifier.size(40.dp) // Компактный размер
-                                    ) {
-                                        val iconVector = when {
-                                            isTimerRunningForThisSubtask -> Icons.Filled.Pause
-                                            isTimerUserPausedForThisSubtask -> Icons.Filled.PlayArrow
-                                            isTimerSystemPausedForThisSubtask -> Icons.Filled.Pause
-                                            else -> Icons.Filled.PlayArrow
-                                        }
-                                        val contentDescription = when {
-                                            isTimerRunningForThisSubtask -> "Приостановить таймер подзадачи"
-                                            isTimerUserPausedForThisSubtask -> "Продолжить таймер подзадачи"
-                                            isTimerSystemPausedForThisSubtask -> "Таймер подзадачи на системной паузе"
-                                            else -> "Запустить таймер подзадачи"
-                                        }
-                                        Icon(
-                                            imageVector = iconVector,
-                                            contentDescription = contentDescription,
-                                            modifier = Modifier.size(24.dp)
-                                        )
-                                    }
-
-                                    // Кнопка завершения для подзадачи (если не завершена)
-                                    if (!subtask.isCompleted) {
-                                        Spacer(modifier = Modifier.width(8.dp)) // Отступ между кнопками
-                                        val rememberedCompleteSubtask = remember(subtask) { { viewModel.completeTask(subtask) } }
-                                        IconButton(
-                                            onClick = rememberedCompleteSubtask,
-                                            modifier = Modifier.size(40.dp),
-                                            colors = IconButtonDefaults.iconButtonColors(
-                                                containerColor = ProgressBarGreen.copy(alpha = 0.15f),
-                                                contentColor = ProgressBarGreen // Цвет иконки
-                                            )
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Filled.Check,
-                                                contentDescription = "Завершить подзадачу",
-                                                modifier = Modifier.size(24.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ
-                }
+                // Подзадачи - секция полностью удалена
             }
 
-            // Spacer(modifier = Modifier.height(16.dp)) // Этот Spacer, кажется, лишний здесь, был между подзадачами и кнопками. Убираем.
+            // Spacer(modifier = Modifier.height(16.dp)) // Этот Spacer, кажется, лишний здесь, был между подзадачами и кнопками. Убираем, если он относился к подзадачам.
+            // Если отступ нужен перед кнопками действий основной задачи, его можно оставить или добавить здесь.
+            // Судя по контексту, он был после блока подзадач, так что его удаление корректно.
+            // Если после удаления подзадач нужен дополнительный отступ перед кнопками основной задачи, его можно добавить здесь:
+            // if (isExpanded) { Spacer(modifier = Modifier.height(16.dp)) }
 
             // Кнопки действий
             Row(
