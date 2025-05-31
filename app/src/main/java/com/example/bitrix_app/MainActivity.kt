@@ -2919,7 +2919,7 @@ fun TaskCard(
                                     val isTimerUserPausedForThisSubtask = sState?.activeTaskId == subtask.id && sState.isUserPaused
                                     val isTimerSystemPausedForThisSubtask = sState?.activeTaskId == subtask.id && sState.isSystemPaused
 
-                                    val subtaskTimerButtonColors = ButtonDefaults.iconButtonColors( // Используем IconButtonColors
+                                    val subtaskTimerButtonColors = IconButtonDefaults.iconButtonColors( // Используем IconButtonColors
                                         containerColor = when {
                                             isTimerRunningForThisSubtask -> scheme.error.copy(alpha = 0.1f)
                                             isTimerUserPausedForThisSubtask -> scheme.tertiary.copy(alpha = 0.1f)
