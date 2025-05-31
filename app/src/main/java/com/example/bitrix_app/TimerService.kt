@@ -119,14 +119,14 @@ class TimerService : Service() {
         Timber.d("Service: Current UI User set to $userName (ID: $userId)")
     }
 
-    fun startTaskTimer(userId: String, userName: String?, taskId: String, taskTitle: String) {
-        Timber.i("Service: Starting timer for task '$taskTitle' (ID: $taskId) for user $userName (ID: $userId)")
+    fun startTaskTimer(userId: String, userName: String?, taskId: String, taskTitle: String, initialSeconds: Int) {
+        Timber.i("Service: Starting timer for task '$taskTitle' (ID: $taskId) for user $userName (ID: $userId) with initial time $initialSeconds seconds.")
         val newState = TimerServiceState(
             userId = userId,
             userName = userName,
             activeTaskId = taskId,
             activeTaskTitle = taskTitle,
-            timerSeconds = 0,
+            timerSeconds = initialSeconds, // Используем initialSeconds
             isUserPaused = false,
             isSystemPaused = false
         )

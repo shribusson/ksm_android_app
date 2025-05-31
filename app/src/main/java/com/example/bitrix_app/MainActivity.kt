@@ -923,10 +923,10 @@ class MainViewModel : ViewModel() {
                 }
             }
 
-            Timber.d("Starting timer for task ${task.id}")
-            service.startTaskTimer(currentUser.userId, currentUser.name, task.id, task.title)
+            Timber.d("Starting timer for task ${task.id} with initial time ${task.timeSpent}")
+            service.startTaskTimer(currentUser.userId, currentUser.name, task.id, task.title, task.timeSpent) // Передаем task.timeSpent
             if (sendComments) {
-                sendTimerComment(task, "Таймер запущен", 0) // Время 0 при старте
+                sendTimerComment(task, "Таймер запущен", task.timeSpent) // Используем task.timeSpent для комментария
             }
             // Перемещаем задачу с активным таймером в начало списка
             tasks = tasks.sortedWith(
