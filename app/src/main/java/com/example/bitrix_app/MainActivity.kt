@@ -76,6 +76,32 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.*
 import kotlin.coroutines.resume
+import java.text.SimpleDateFormat // Добавим для formatDeadline
+
+// Вспомогательная функция для форматирования крайнего срока
+fun formatDeadline(deadlineStr: String?): String? {
+    if (deadlineStr.isNullOrBlank()) return null // Handle null or blank
+    val outputFormatter = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+    // Список возможных форматов даты, которые может вернуть API Bitrix для DEADLINE
+    val parsers = listOf(
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()), // Полный формат с часовым поясом
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()),     // Распространенный формат без пояса
+        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())               // Только дата
+    )
+
+    for (parser in parsers) {
+        try {
+            val parsedDate = parser.parse(deadlineStr)
+            if (parsedDate != null) { // Добавлена проверка на null после parse
+                return outputFormatter.format(parsedDate)
+            }
+        } catch (e: java.text.ParseException) {
+            // Попробовать следующий парсер
+        }
+    }
+    Timber.w("Could not parse deadline: $deadlineStr with any known format.")
+    return deadlineStr // Вернуть оригинальную строку, если все попытки парсинга не удались
+}
 
 // Модели данных
 data class User(val name: String, val webhookUrl: String, val userId: String, val avatar: String)
@@ -87,6 +113,7 @@ data class Task(
     val timeSpent: Int,
     val timeEstimate: Int,
     val status: String = "",
+    val deadline: String? = null, // Крайний срок задачи
     val changedDate: String? = null, // Добавлено поле для даты изменения
     val attachedFileIds: List<String> = emptyList() // ID прикрепленных файлов (UF_TASK_WEBDAV_FILES)
     // Поле isTimerRunning удалено, так как состояние таймера управляется в UserTimerData
@@ -356,6 +383,7 @@ class MainViewModel : ViewModel() {
                 "&select[]=TIME_ESTIMATE" +
                 "&select[]=STATUS" +
                 "&select[]=RESPONSIBLE_ID" +
+                "&select[]=DEADLINE" + // Добавляем DEADLINE
                 "&select[]=CHANGED_DATE" + // Добавляем CHANGED_DATE
                 "&select[]=UF_TASK_WEBDAV_FILES" + // По-прежнему запрашиваем его явно
                 "&select[]=UF_*" // Запрашиваем все пользовательские поля для диагностики
@@ -412,7 +440,12 @@ class MainViewModel : ViewModel() {
                                             val calendar = Calendar.getInstance()
                                             calendar.add(Calendar.DAY_OF_YEAR, -2)
                                             val twoDaysAgo = calendar.time
+                                            // dateFormat для changedDate
                                             val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+                                            // Форматы для deadline
+                                            val deadlineDateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+                                            val simpleDeadlineDateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
 
                                             val tasksForStatusFiltering = newRawTasksList
                                             val filteredTasksList = tasksForStatusFiltering.filter { task ->
@@ -434,9 +467,31 @@ class MainViewModel : ViewModel() {
                                             Timber.d("Raw tasks (bg): ${newRawTasksList.size}, Filtered (bg, showCompleted=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name}")
 
                                             val newSortedTasksList = filteredTasksList.sortedWith(
-                                                compareBy<Task> { it.isCompleted }
-                                                    .thenByDescending { it.changedDate }
-                                                    .thenBy { it.id.toIntOrNull() ?: 0 }
+                                                compareBy<Task> { it.isCompleted } // Завершенные задачи в конце
+                                                    .thenBy { task -> // Сортировка по крайнему сроку (по возрастанию, nulls/ошибки парсинга в конце)
+                                                        task.deadline?.takeIf { it.isNotBlank() }?.let { deadlineStr ->
+                                                            try {
+                                                                deadlineDateFormat.parse(deadlineStr)
+                                                            } catch (e: java.text.ParseException) {
+                                                                try {
+                                                                    simpleDeadlineDateFormat.parse(deadlineStr)
+                                                                } catch (e2: java.text.ParseException) {
+                                                                    Timber.w(e, "Failed to parse deadline '$deadlineStr' for task ${task.id} in loadTasks, treating as far future.")
+                                                                    Date(Long.MAX_VALUE)
+                                                                }
+                                                            }
+                                                        } ?: Date(Long.MAX_VALUE) // Задачи без крайнего срока или с пустым значением - в конец
+                                                    }
+                                                    .thenByDescending { task -> // Затем по дате изменения (новые сначала)
+                                                        task.changedDate?.let { dateStr ->
+                                                            try {
+                                                                dateFormat.parse(dateStr)
+                                                            } catch (e: java.text.ParseException) {
+                                                                null // Ошибки парсинга даты изменения приведут к неопределенному порядку для этого критерия
+                                                            }
+                                                        }
+                                                    }
+                                                    .thenBy { it.id.toIntOrNull() ?: 0 } // Наконец, по ID
                                             )
                                             TaskProcessingOutput(newSortedTasksList, newRawTasksList.size, null)
                                         } catch (e: Exception) {
@@ -499,8 +554,8 @@ class MainViewModel : ViewModel() {
     // Простой метод загрузки без фильтров
     private fun loadTasksSimple() {
         val user = users[currentUserIndex]
-        // Возвращаем UF_TASK_WEBDAV_FILES и добавляем UF_* в простой запрос
-        val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=UF_TASK_WEBDAV_FILES&select[]=UF_*"
+        // Возвращаем UF_TASK_WEBDAV_FILES и добавляем UF_*, DEADLINE в простой запрос
+        val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=DEADLINE&select[]=CHANGED_DATE&select[]=UF_TASK_WEBDAV_FILES&select[]=UF_*"
 
         Timber.d("Trying simple URL with basic fields for user ${user.name}: $url")
 
@@ -547,7 +602,12 @@ class MainViewModel : ViewModel() {
                                                 val calendar = Calendar.getInstance()
                                                 calendar.add(Calendar.DAY_OF_YEAR, -2)
                                                 val twoDaysAgo = calendar.time
+                                                // dateFormat для changedDate
                                                 val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+                                                // Форматы для deadline
+                                                val deadlineDateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+                                                val simpleDeadlineDateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
                                                 val filteredTasksList = newRawTasksList.filter { task ->
                                                     if (!task.isCompleted) true
                                                     else {
@@ -561,7 +621,29 @@ class MainViewModel : ViewModel() {
                                                 }
                                                 val newSortedTasksList = filteredTasksList.sortedWith(
                                                     compareBy<Task> { it.isCompleted }
-                                                        .thenByDescending { it.changedDate }
+                                                        .thenBy { task ->
+                                                            task.deadline?.takeIf { it.isNotBlank() }?.let { deadlineStr ->
+                                                                try {
+                                                                    deadlineDateFormat.parse(deadlineStr)
+                                                                } catch (e: java.text.ParseException) {
+                                                                    try {
+                                                                        simpleDeadlineDateFormat.parse(deadlineStr)
+                                                                    } catch (e2: java.text.ParseException) {
+                                                                        Timber.w(e, "Failed to parse deadline '$deadlineStr' for task ${task.id} in loadTasksSimple, treating as far future.")
+                                                                        Date(Long.MAX_VALUE)
+                                                                    }
+                                                                }
+                                                            } ?: Date(Long.MAX_VALUE)
+                                                        }
+                                                        .thenByDescending { task ->
+                                                            task.changedDate?.let { dateStr ->
+                                                                try {
+                                                                    dateFormat.parse(dateStr)
+                                                                } catch (e: java.text.ParseException) {
+                                                                    null
+                                                                }
+                                                            }
+                                                        }
                                                         .thenBy { it.id.toIntOrNull() ?: 0 }
                                                 )
                                                 TaskProcessingOutput(newSortedTasksList, newRawTasksList.size, null)
@@ -621,7 +703,7 @@ class MainViewModel : ViewModel() {
         val url = "${user.webhookUrl}tasks.task.list" +
                 "?order[ID]=desc" + // Оставляем сортировку по ID для альтернативного варианта
                 // "&filter[CREATED_BY]=${user.userId}" + // Убираем фильтр по CREATED_BY, он может быть слишком строгим
-                "&select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=CHANGED_DATE&select[]=UF_TASK_WEBDAV_FILES&select[]=UF_*" // Возвращаем UF_TASK_WEBDAV_FILES и UF_*
+                "&select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=DEADLINE&select[]=CHANGED_DATE&select[]=UF_TASK_WEBDAV_FILES&select[]=UF_*" // Возвращаем UF_TASK_WEBDAV_FILES, UF_* и DEADLINE
 
         Timber.d("Trying alternative URL for user ${user.name}: $url")
 
@@ -668,7 +750,12 @@ class MainViewModel : ViewModel() {
                                                 val calendar = Calendar.getInstance()
                                                 calendar.add(Calendar.DAY_OF_YEAR, -2)
                                                 val twoDaysAgo = calendar.time
+                                                // dateFormat для changedDate
                                                 val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+                                                // Форматы для deadline
+                                                val deadlineDateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+                                                val simpleDeadlineDateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
                                                 val filteredTasksList = newRawTasksList.filter { task ->
                                                     if (!task.isCompleted) true
                                                     else {
@@ -682,7 +769,29 @@ class MainViewModel : ViewModel() {
                                                 }
                                                 val newSortedTasksList = filteredTasksList.sortedWith(
                                                     compareBy<Task> { it.isCompleted }
-                                                        .thenByDescending { it.changedDate }
+                                                        .thenBy { task ->
+                                                            task.deadline?.takeIf { it.isNotBlank() }?.let { deadlineStr ->
+                                                                try {
+                                                                    deadlineDateFormat.parse(deadlineStr)
+                                                                } catch (e: java.text.ParseException) {
+                                                                    try {
+                                                                        simpleDeadlineDateFormat.parse(deadlineStr)
+                                                                    } catch (e2: java.text.ParseException) {
+                                                                        Timber.w(e, "Failed to parse deadline '$deadlineStr' for task ${task.id} in loadTasksAlternative, treating as far future.")
+                                                                        Date(Long.MAX_VALUE)
+                                                                    }
+                                                                }
+                                                            } ?: Date(Long.MAX_VALUE)
+                                                        }
+                                                        .thenByDescending { task ->
+                                                            task.changedDate?.let { dateStr ->
+                                                                try {
+                                                                    dateFormat.parse(dateStr)
+                                                                } catch (e: java.text.ParseException) {
+                                                                    null
+                                                                }
+                                                            }
+                                                        }
                                                         .thenBy { it.id.toIntOrNull() ?: 0 }
                                                 )
                                                 TaskProcessingOutput(newSortedTasksList, newRawTasksList.size, null)
@@ -822,6 +931,7 @@ class MainViewModel : ViewModel() {
             timeSpent = timeSpent,
             timeEstimate = taskJson.optInt("timeEstimate", taskJson.optInt("TIME_ESTIMATE", 7200)),
             status = taskJson.optString("status", taskJson.optString("STATUS", "")),
+            deadline = taskJson.optString("deadline", taskJson.optString("DEADLINE", null)),
             changedDate = taskJson.optString("changedDate", taskJson.optString("CHANGED_DATE", null)),
             attachedFileIds = fileIds // Присваиваем распарсенные ID
         )
@@ -2902,6 +3012,22 @@ fun TaskCard(
                     color = progressTextColor
                 )
             }
+
+            // Отображение крайнего срока, если он есть
+            task.deadline?.let { deadlineValue ->
+                formatDeadline(deadlineValue)?.let { formattedDate ->
+                    Spacer(modifier = Modifier.height(4.dp)) // Небольшой отступ перед крайним сроком
+                    Text(
+                        text = "Крайний срок: $formattedDate",
+                        fontSize = 14.sp,
+                        color = scheme.onSurfaceVariant, // Используем цвет из схемы
+                        // Можно добавить выделение цветом, если срок просрочен или близок
+                        // fontWeight = if (isDeadlineSoonOrOverdue) FontWeight.Bold else FontWeight.Normal,
+                        // color = if (isDeadlineOverdue) scheme.error else scheme.onSurfaceVariant
+                    )
+                }
+            }
+
 
             // Развернутая информация
             if (isExpanded) {
