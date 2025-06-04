@@ -106,7 +106,13 @@ fun formatDeadline(deadlineStr: String?): String? {
 }
 
 // Модели данных
-data class User(val name: String, val webhookUrl: String, val userId: String, val avatar: String)
+data class User(
+    val name: String,
+    val webhookUrl: String,
+    val userId: String,
+    val avatar: String,
+    val supervisorId: String? = null // ID руководителя
+)
 
 data class Task(
     val id: String,
@@ -192,10 +198,10 @@ class MainViewModel : ViewModel() {
 
     // Пользователи с их ID в системе и аватарами
     val users = listOf(
-        User("Денис Мелков", "https://bitrix.tooksm.kz/rest/320/gwx0v32nqbiwu7ww/", "320", "ДМ"),
-        User("Владислав Малай", "https://bitrix.tooksm.kz/rest/321/smczp19q348xui28/", "321", "ВМ"),
-        User("Ким Филби", "https://bitrix.tooksm.kz/rest/253/tk5y2f3sukqxn5bi/", "253", "КФ")
-        // User("Тестовый Пользователь", "https://your_bitrix_domain/rest/user_id/webhook_code/", "user_id", "ТП")
+        User("Денис Мелков", "https://bitrix.tooksm.kz/rest/320/gwx0v32nqbiwu7ww/", "320", "ДМ", supervisorId = "253"), // Ким Филби - руководитель
+        User("Владислав Малай", "https://bitrix.tooksm.kz/rest/321/smczp19q348xui28/", "321", "ВМ", supervisorId = "253"), // Ким Филби - руководитель
+        User("Ким Филби", "https://bitrix.tooksm.kz/rest/253/tk5y2f3sukqxn5bi/", "253", "КФ", supervisorId = null) // У Кима нет руководителя в данном контексте
+        // User("Тестовый Пользователь", "https://your_bitrix_domain/rest/user_id/webhook_code/", "user_id", "ТП", supervisorId = "ID_РУКОВОДИТЕЛЯ")
     )
 
     var currentUserIndex by mutableStateOf(0)
@@ -1838,8 +1844,8 @@ class MainViewModel : ViewModel() {
             val url = "${user.webhookUrl}tasks.task.add"
             val formBodyBuilder = FormBody.Builder()
                 .add("fields[TITLE]", taskTitle)
-                .add("fields[RESPONSIBLE_ID]", user.userId)
-                .add("fields[CREATED_BY]", user.userId)
+                .add("fields[RESPONSIBLE_ID]", user.userId) // Ответственный - текущий пользователь
+                .add("fields[CREATED_BY]", user.supervisorId ?: user.userId) // Постановщик - руководитель или сам пользователь
                 .add("fields[DESCRIPTION]", "Стандартная задача, создана автоматически из приложения.")
                 .add("fields[PRIORITY]", taskType.defaultPriority)
 
