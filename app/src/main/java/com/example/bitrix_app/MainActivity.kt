@@ -3224,7 +3224,30 @@ fun TaskCard(
                     }
                 }
 
-                // Кнопка добавления текстового комментария БУДЕТ ПЕРЕМЕЩЕНА НИЖЕ
+                // Кнопка добавления текстового комментария (если задача не завершена)
+                if (!task.isCompleted) {
+                    IconButton(
+                        onClick = { onAddCommentClick(task) },
+                        modifier = Modifier
+                            .weight(0.6f) // Дадим ей немного меньше места, чем основным кнопкам
+                            .heightIn(min = 52.dp)
+                            .shadow(elevation = 2.dp, shape = CircleShape)
+                            .background(
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                shape = CircleShape
+                            )
+                            .padding(horizontal = 8.dp),
+                        colors = IconButtonDefaults.iconButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AddComment,
+                            contentDescription = "Добавить комментарий",
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
             }
         }
     }
