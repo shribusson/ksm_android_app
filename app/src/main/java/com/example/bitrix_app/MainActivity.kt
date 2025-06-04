@@ -2717,7 +2717,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                         )
                     )
                 )
-                .align(Alignment.TopCenter) // Align this gradient Box to the top of its parent Box
+            // .align(Alignment.TopCenter) // Removed to see if it resolves the alignment error.
+                                        // The Box will default to TopStart within its parent Box.
         )
     } // End of Box wrapper for LazyColumn and gradient
 } // End of MainScreen's primary Column
