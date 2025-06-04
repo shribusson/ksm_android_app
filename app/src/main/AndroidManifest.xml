@@ -5,7 +5,7 @@
     <!-- ДОБАВЬТЕ ЭТИ СТРОКИ В САМОЕ НАЧАЛО -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- <uses-permission android:name="android.permission.RECORD_AUDIO" /> Удалено, так как аудиокомментарии убраны -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Для Android 13 (API 33) и выше для уведомлений Foreground Service -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
