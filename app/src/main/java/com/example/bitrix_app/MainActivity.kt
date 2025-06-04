@@ -2721,7 +2721,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
         )
     } // End of Box wrapper for LazyColumn and gradient
 } // End of MainScreen's primary Column
-} // End of MainScreen composable
+// } // End of MainScreen composable - Эта скобка была лишней
 
 @Composable
 private fun RenderUserAvatar(user: User, size: Int) { // Принимаем User напрямую
