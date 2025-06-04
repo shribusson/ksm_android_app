@@ -26,9 +26,10 @@ import androidx.compose.material.icons.filled.ArrowBack // Для кнопки "
 import androidx.compose.material.icons.filled.Check // Для галочки завершения
 import androidx.compose.material.icons.filled.ExpandLess // Для иконки "свернуть"
 import androidx.compose.material.icons.filled.ExpandMore // Для иконки "развернуть"
-import androidx.compose.material.icons.filled.Mic
+// import androidx.compose.material.icons.filled.Mic // Удалено
 import androidx.compose.material.icons.filled.Pause // Для иконки паузы
 import androidx.compose.material.icons.filled.Add // Для кнопки выпадающего списка быстрых задач
+import androidx.compose.material.icons.filled.AddComment // Для добавления текстового комментария
 import androidx.compose.material.icons.filled.PlayArrow // Для иконки старт/продолжить
 import androidx.compose.material.icons.filled.PowerSettingsNew // Для кнопки управления рабочим днем
 import androidx.compose.material.icons.filled.Refresh // Для кнопки "Обновить"
@@ -42,10 +43,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow // <--- Добавляем этот импорт
 import androidx.compose.ui.graphics.Brush // For gradient
 import androidx.compose.ui.graphics.Color
-import android.Manifest // Для запроса разрешений
-import android.content.pm.PackageManager // Для проверки разрешений
-import android.media.MediaRecorder
-import android.util.Base64 // Для кодирования в Base64
+import android.Manifest // Для запроса разрешений (все еще нужен для POST_NOTIFICATIONS)
+import android.content.pm.PackageManager // Для проверки разрешений (все еще нужен для POST_NOTIFICATIONS)
+// import android.media.MediaRecorder // Удалено
+// import android.util.Base64 // Для кодирования в Base64 - удалено, если не используется в другом месте
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext // Для LocalContext.current
 import androidx.compose.ui.res.painterResource
@@ -231,16 +232,16 @@ class MainViewModel : ViewModel() {
     var loadingFilesForTaskMap by mutableStateOf<Map<String, Boolean>>(emptyMap()) // Map<taskId, isLoading>
         private set
 
-    // Состояния для записи аудио
-    var currentRecordingTask by mutableStateOf<Task?>(null)
-        private set
-    var isRecordingAudio by mutableStateOf(false)
-        private set
-    var audioProcessingMessage by mutableStateOf<String?>(null)
-        private set
+    // Состояния для записи аудио - УДАЛЕНО
+    // var currentRecordingTask by mutableStateOf<Task?>(null)
+    //     private set
+    // var isRecordingAudio by mutableStateOf(false)
+    //     private set
+    // var audioProcessingMessage by mutableStateOf<String?>(null) // Удалено, т.к. было только для аудио
+    //     private set
 
-    private var mediaRecorder: MediaRecorder? = null
-    private var audioOutputFile: java.io.File? = null // Используем java.io.File
+    // private var mediaRecorder: MediaRecorder? = null // Удалено
+    // private var audioOutputFile: java.io.File? = null // Удалено
 
     // Состояние для отображения логов
     var logLines by mutableStateOf<List<String>>(emptyList())
@@ -258,6 +259,14 @@ class MainViewModel : ViewModel() {
 
     // Состояние для обратной связи при быстром создании задач
     var quickTaskCreationStatus by mutableStateOf<String?>(null)
+        private set
+
+    // Состояния для диалога добавления текстового комментария
+    var showAddCommentDialogForTask by mutableStateOf<Task?>(null)
+        private set
+    var commentTextInput by mutableStateOf("")
+        private set
+    var textCommentStatusMessage by mutableStateOf<String?>(null) // Сообщение о статусе добавления комментария
         private set
 
     // Состояния для управления рабочим днем
@@ -1929,399 +1938,98 @@ class MainViewModel : ViewModel() {
 
     fun getCurrentUser() = users[currentUserIndex]
 
-    fun toggleAudioRecording(task: Task, context: Context) {
-        if (isRecordingAudio) {
-            if (currentRecordingTask?.id == task.id) {
-                stopAudioRecordingAndProcess(context)
-            } else {
-                // Если запись идет для другой задачи, сначала остановим ее (можно без сохранения)
-                Timber.w("Audio recording for task ${currentRecordingTask?.id} was interrupted to record for task ${task.id}")
-                stopAudioRecordingAndProcess(context, discard = true) // Останавливаем и отменяем предыдущую
-                startAudioRecording(task, context) // Начинаем новую
-            }
-        } else {
-            startAudioRecording(task, context)
-        }
+    // --- Функции для текстовых комментариев ---
+    fun prepareForTextComment(task: Task) {
+        showAddCommentDialogForTask = task
+        commentTextInput = "" // Очищаем поле ввода
+        textCommentStatusMessage = null // Сбрасываем предыдущее сообщение
+        errorMessage = null // Сбрасываем общую ошибку
     }
 
-    private fun startAudioRecording(task: Task, context: Context) {
-        currentRecordingTask = task
-        val fileName = "audio_comment_${task.id}_${System.currentTimeMillis()}.m4a" // Используем M4A формат
-        audioOutputFile = java.io.File(context.cacheDir, fileName)
-
-        mediaRecorder = MediaRecorder(context).apply { // Для API 31+ нужен контекст
-            setAudioSource(MediaRecorder.AudioSource.MIC)
-            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)   // Используем M4A формат
-            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)      // Используем AAC кодек
-            setOutputFile(audioOutputFile?.absolutePath)
-            try {
-                prepare()
-                start()
-                isRecordingAudio = true
-                audioProcessingMessage = "Идет запись для '${task.title}'..."
-                Timber.i("Audio recording started for task ${task.id} to file ${audioOutputFile?.absolutePath}")
-            } catch (e: IOException) {
-                Timber.e(e, "MediaRecorder prepare() failed for task ${task.id}")
-                audioProcessingMessage = "Ошибка начала записи: ${e.message}"
-                resetAudioRecordingState()
-            } catch (e: IllegalStateException) {
-                Timber.e(e, "MediaRecorder start() failed for task ${task.id}")
-                audioProcessingMessage = "Ошибка старта записи: ${e.message}"
-                resetAudioRecordingState()
-            }
-        }
+    fun dismissAddCommentDialog() {
+        showAddCommentDialogForTask = null
+        commentTextInput = ""
     }
 
-    private fun stopAudioRecordingAndProcess(context: Context, discard: Boolean = false) {
-        if (!isRecordingAudio && mediaRecorder == null) { // Если уже остановлено или не начиналось
-            Timber.d("stopAudioRecordingAndProcess called but no active recording or recorder.")
-            resetAudioRecordingState() // Просто сбрасываем состояние на всякий случай
-            return
-        }
+    fun submitTextComment(taskId: String, commentText: String) {
+        dismissAddCommentDialog() // Скрываем диалог
+        val user = users[currentUserIndex]
+        textCommentStatusMessage = "Отправка комментария..."
+        Timber.i("Submitting text comment for task $taskId by user ${user.name}: '$commentText'")
 
-        try {
-            mediaRecorder?.stop()
-        } catch (e: RuntimeException) {
-            // Часто возникает, если stop() вызывается слишком быстро после start() или в неправильном состоянии
-            Timber.w(e, "MediaRecorder stop() failed. May be called too soon or in wrong state.")
-            audioOutputFile?.delete()
-            audioOutputFile = null
-        } finally {
-            mediaRecorder?.release()
-            mediaRecorder = null
-        }
-
-        val recordedFile = audioOutputFile
-        val taskToAttach = currentRecordingTask
-
-        isRecordingAudio = false
-
-        if (discard || recordedFile == null || !recordedFile.exists() || recordedFile.length() == 0L || taskToAttach == null) {
-            audioProcessingMessage = if (discard) "Запись отменена." else "Ошибка: аудиофайл не создан или пуст."
-            Timber.w("Audio recording processing aborted. Discard: $discard, File: ${recordedFile?.path}, Exists: ${recordedFile?.exists()}, Length: ${recordedFile?.length()}, Task: ${taskToAttach?.id}")
-            recordedFile?.delete()
-            resetAudioRecordingState(clearMessageDelay = 3000L)
-            return
-        }
-
-        audioProcessingMessage = "Обработка аудио для '${taskToAttach.title}'..."
-        Timber.i("Audio recording stopped for task ${taskToAttach.id}. File: ${recordedFile.absolutePath}, Size: ${recordedFile.length()} bytes.")
-        uploadAudioAndCreateComment(taskToAttach, recordedFile, context)
-
-        audioOutputFile = null
-    }
-
-
-    private suspend fun fetchUserStorageId(user: User): String? {
-        // Первая попытка: с фильтром по USER и ENTITY_ID
-        val specificUrl = "${user.webhookUrl}disk.storage.getlist?filter[ENTITY_TYPE]=USER&filter[ENTITY_ID]=${user.userId}"
-        Timber.d("Attempt 1: Fetching storage ID for user ${user.userId} with URL: $specificUrl")
-        var storageId = makeStorageRequest(specificUrl, user, true)
-
-        if (storageId != null) {
-            Timber.i("Found storage ID '${storageId}' for user ${user.userId} using specific filter.")
-            return storageId
-        }
-
-        // Вторая попытка: без фильтров, с последующей фильтрацией на клиенте
-        Timber.w("Specific storage filter failed for user ${user.userId}. Attempt 2: Fetching all storages and filtering client-side.")
-        val genericUrl = "${user.webhookUrl}disk.storage.getlist"
-        Timber.d("Attempt 2: Fetching all storages for user ${user.userId} (webhook context) with URL: $genericUrl")
-        storageId = makeStorageRequest(genericUrl, user, false)
-
-        if (storageId != null) {
-            Timber.i("Found storage ID '${storageId}' for user ${user.userId} by filtering all storages.")
-            return storageId
-        }
-
-        Timber.e("Failed to find any suitable storage for user ${user.userId} after two attempts. Ensure the webhook for user ${user.name} (ID: ${user.userId}) has the 'disk' permission scope in Bitrix24 and the user has an accessible storage.")
-        return null
-    }
-
-    private suspend fun makeStorageRequest(url: String, user: User, isSpecificFilter: Boolean): String? = suspendCancellableCoroutine { continuation ->
-        val request = Request.Builder().url(url).build()
-
-        client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                Timber.e(e, "Failed to fetch storage list from URL: $url")
-                if (continuation.isActive) continuation.resume(null)
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                try {
-                    val responseBody = response.body?.string()
-
-                    if (!response.isSuccessful) {
-                        Timber.w("Fetch storage list from URL $url failed. Code: ${response.code}, Message: ${response.message}, Body: $responseBody")
-                        if (continuation.isActive) continuation.resume(null)
-                        return
-                    }
-
-                    if (responseBody == null) {
-                        Timber.w("Fetch storage list response body is null from URL: $url")
-                        if (continuation.isActive) continuation.resume(null)
-                        return
-                    }
-                    Timber.d("Storage list response from URL $url: $responseBody")
-                    val json = JSONObject(responseBody)
-
-                    if (json.has("error")) {
-                        val errorDescription = json.optString("error_description", json.optString("error", "Unknown API error"))
-                        Timber.w("API error in fetch storage list response from URL $url: $errorDescription. Full response: $responseBody")
-                        if (continuation.isActive) continuation.resume(null)
-                        return
-                    }
-
-                    val resultArray = json.optJSONArray("result")
-                    if (resultArray != null && resultArray.length() > 0) {
-                        if (isSpecificFilter) {
-                            // Если это был специфический запрос, и он вернул результат, берем первый ID
-                            val firstStorageObject = resultArray.getJSONObject(0)
-                            val id = firstStorageObject.optString("ID")
-                            if (id.isNotEmpty()) {
-                                if (continuation.isActive) continuation.resume(id)
-                                return
-                            }
-                        } else {
-                            // Если это был общий запрос, ищем подходящее хранилище
-                            for (i in 0 until resultArray.length()) {
-                                val storageObject = resultArray.getJSONObject(i)
-                                val entityId = storageObject.optString("ENTITY_ID")
-                                val entityType = storageObject.optString("ENTITY_TYPE")
-                                val id = storageObject.optString("ID")
-                                val name = storageObject.optString("NAME", "N/A") // Логируем также имя хранилища для информации
-                                Timber.d("Checking storage object: ID=$id, NAME=$name, ENTITY_ID=$entityId, ENTITY_TYPE=$entityType for user ${user.userId}")
-
-                                if (id.isNotEmpty() && entityId == user.userId && entityType.equals("USER", ignoreCase = true)) {
-                                    Timber.i("Found matching user storage: ID=$id, NAME=$name, ENTITY_ID=$entityId, ENTITY_TYPE=$entityType for user ${user.userId}")
-                                    if (continuation.isActive) continuation.resume(id)
-                                    return
-                                }
-                            }
-                            // Если не нашли точное совпадение, можно попробовать взять первое хранилище типа USER, если оно есть
-                            Timber.d("Exact match for user ${user.userId} not found. Looking for first available 'USER' type storage.")
-                            for (i in 0 until resultArray.length()) {
-                                val storageObject = resultArray.getJSONObject(i)
-                                val entityType = storageObject.optString("ENTITY_TYPE")
-                                val id = storageObject.optString("ID")
-                                val name = storageObject.optString("NAME", "N/A")
-                                if (id.isNotEmpty() && entityType.equals("USER", ignoreCase = true)) {
-                                    Timber.w("Could not find exact user storage for ${user.userId}. Using first available USER storage: ID=$id, NAME=$name, ENTITY_TYPE=$entityType")
-                                    if (continuation.isActive) continuation.resume(id)
-                                    return
-                                }
-                            }
-                        }
-                    }
-                    
-                    Timber.w("No suitable storage found in response from URL $url. Response: $responseBody. Ensure the webhook for user ${user.name} (ID: ${user.userId}) has the 'disk' permission scope in Bitrix24.")
-                    if (continuation.isActive) continuation.resume(null)
-                } catch (e: Exception) {
-                    Timber.e(e, "Error parsing storage list response from URL $url. Raw response might have been logged above. Ensure the webhook for user ${user.name} (ID: ${user.userId}) has the 'disk' permission scope in Bitrix24.")
-                    if (continuation.isActive) continuation.resume(null)
-                } finally {
-                    response.close()
-                }
-            }
-        })
-        continuation.invokeOnCancellation {
-            Timber.d("makeStorageRequest coroutine cancelled for URL: $url")
-        }
-    }
-
-    private suspend fun uploadFileToStorage(user: User, storageId: String, file: java.io.File): String? = suspendCancellableCoroutine { continuation ->
-        val url = "${user.webhookUrl}disk.storage.uploadfile"
-        Timber.d("Uploading file ${file.name} to storage $storageId for user ${user.userId} using Base64. URL: $url")
-
-        val fileBytes = try {
-            file.readBytes()
-        } catch (e: IOException) {
-            Timber.e(e, "Failed to read file ${file.name} for Base64 encoding")
-            if (continuation.isActive) continuation.resume(null)
-            return@suspendCancellableCoroutine
-        }
-
-        val fileBase64 = Base64.encodeToString(fileBytes, Base64.NO_WRAP)
-
-        val formBody = FormBody.Builder()
-            .add("id", storageId) // ID хранилища
-            .add("data[NAME]", file.name) // Имя файла, как описано для disk.folder.uploadfile
-            .add("fileContent[0]", file.name) // Имя файла как первый элемент массива fileContent
-            .add("fileContent[1]", fileBase64) // Содержимое файла в Base64 как второй элемент
-            .build()
-        // При отправке Base64 MIME-тип в RequestBody не используется напрямую для файла,
-        // но если бы мы отправляли бинарный файл (не Base64), здесь был бы, например, audio/webm
-        // val requestBodyForBinaryFile = file.asRequestBody("audio/webm".toMediaTypeOrNull())
-
-        val request = Request.Builder().url(url).post(formBody).build()
-
-        client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                Timber.e(e, "Failed to upload file ${file.name}")
-                if (continuation.isActive) continuation.resume(null)
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                try {
-                    val responseBodyString = response.body?.string() // Читаем тело ответа один раз
-
-                    if (!response.isSuccessful) {
-                        Timber.w("File upload failed for ${file.name}. Code: ${response.code}, Message: ${response.message}. Response Body: $responseBodyString")
-                        if (continuation.isActive) continuation.resume(null)
-                        return
-                    }
-                    // val responseBody = response.body?.string() // Уже прочитано выше
-                    if (responseBodyString == null) { // Используем прочитанное тело
-                        Timber.w("File upload response body is null for ${file.name}")
-                        if (continuation.isActive) continuation.resume(null)
-                        return
-                    }
-                    Timber.d("File upload response for ${file.name}: $responseBodyString")
-                    val json = JSONObject(responseBodyString)
-                    if (json.has("result")) {
-                        val resultObject = json.getJSONObject("result")
-                        val diskObjectId = resultObject.optString("ID") // ID объекта файла на Диске
-                        val bFileId = resultObject.optString("FILE_ID") // ID файла в b_file (для информации)
-
-                        if (diskObjectId.isNotEmpty()) {
-                            Timber.i("Disk Object ID: '$diskObjectId', b_file ID: '$bFileId'. Using Disk Object ID ('$diskObjectId') for UF_FORUM_MESSAGE_DOC.")
-                            if (continuation.isActive) continuation.resume(diskObjectId) // Возвращаем ID объекта Диска
-                            return
-                        }
-                    }
-                    Timber.w("Disk Object ID (result.ID) not found or empty in upload response for ${file.name}")
-                    if (continuation.isActive) continuation.resume(null)
-                } catch (e: Exception) {
-                    Timber.e(e, "Error parsing file upload response for ${file.name}")
-                    if (continuation.isActive) continuation.resume(null)
-                } finally {
-                    response.close()
-                }
-            }
-        })
-        continuation.invokeOnCancellation {
-            Timber.d("uploadFileToStorage coroutine cancelled for file ${file.name}")
-        }
-    }
-
-    private suspend fun addCommentToTask(user: User, taskId: String, uploadedFileId: String): Boolean = suspendCancellableCoroutine { continuation ->
         val url = "${user.webhookUrl}task.commentitem.add"
-        val postMessageText = "Аудиокомментарий к задаче (см. вложение)." // Общий текст для сообщения
-        val fileIdForUf = "n$uploadedFileId" // Добавляем префикс 'n' к ID файла Диска
-        Timber.d("Adding comment to task $taskId with file ID $fileIdForUf (as UF_FORUM_MESSAGE_DOC). User: ${user.name}. URL: $url. Message: $postMessageText")
-
         val formBody = FormBody.Builder()
             .add("TASK_ID", taskId)
-            .add("FIELDS[POST_MESSAGE]", postMessageText)
-            .add("FIELDS[UF_FORUM_MESSAGE_DOC][0]", fileIdForUf) // Прикрепляем файл через UF_FORUM_MESSAGE_DOC
-            .add("FIELDS[AUTHOR_ID]", user.userId)
+            .add("FIELDS[POST_MESSAGE]", commentText)
+            .add("FIELDS[AUTHOR_ID]", user.userId) // Автор комментария - текущий пользователь
             .build()
 
         val request = Request.Builder().url(url).post(formBody).build()
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                Timber.e(e, "Failed to add comment to task $taskId")
-                if (continuation.isActive) continuation.resume(false)
+                viewModelScope.launch {
+                    Timber.e(e, "Failed to submit text comment for task $taskId")
+                    textCommentStatusMessage = "Ошибка сети при отправке комментария."
+                    delayAndClearTextCommentStatus()
+                }
             }
 
             override fun onResponse(call: Call, response: Response) {
-                var success = false
-                try {
-                    val responseBody = response.body?.string() // Читаем тело ответа один раз
-                    if (!response.isSuccessful) {
-                        Timber.w("Add comment failed for task $taskId. Code: ${response.code}, Message: ${response.message}. Body: $responseBody")
-                    } else {
-                        Timber.d("Add comment response for task $taskId: $responseBody")
-                        if (responseBody != null) {
+                viewModelScope.launch {
+                    val responseBody = response.body?.string()
+                    if (response.isSuccessful && responseBody != null) {
+                        try {
                             val json = JSONObject(responseBody)
-                            success = json.has("result") && json.optInt("result", 0) > 0
-                            if (!success) {
-                                Timber.w("Add comment response indicates failure or no comment ID for task $taskId. Response: $responseBody")
+                            if (json.has("result") && json.optInt("result", 0) > 0) {
+                                Timber.i("Text comment submitted successfully for task $taskId. Response: $responseBody")
+                                textCommentStatusMessage = "Комментарий успешно добавлен."
+                                // Можно обновить детали задачи или чек-листы, если комментарии там отображаются
+                                // fetchChecklistForTask(taskId) // Например, если комментарии влияют на чек-лист
+                                // loadTasks() // Или полный перезапрос задач, если нужно обновить что-то в карточке
+                            } else {
+                                val errorDesc = json.optString("error_description", "Не удалось добавить комментарий")
+                                Timber.w("API error submitting text comment for task $taskId: $errorDesc. Response: $responseBody")
+                                textCommentStatusMessage = "Ошибка API: $errorDesc"
                             }
-                        } else {
-                            Timber.w("Add comment response body is null for task $taskId")
+                        } catch (e: Exception) {
+                            Timber.e(e, "Error parsing text comment response for task $taskId. Response: $responseBody")
+                            textCommentStatusMessage = "Ошибка обработки ответа сервера."
                         }
+                    } else {
+                        Timber.w("Failed to submit text comment for task $taskId. Code: ${response.code}. Response: $responseBody")
+                        textCommentStatusMessage = "Ошибка сервера: ${response.code}"
                     }
-                } catch (e: Exception) {
-                    Timber.e(e, "Error parsing add comment response for task $taskId")
-                } finally {
-                    response.close()
-                    if (continuation.isActive) continuation.resume(success)
+                    delayAndClearTextCommentStatus()
                 }
             }
         })
-        continuation.invokeOnCancellation {
-            Timber.d("addCommentToTask coroutine cancelled for task $taskId")
-        }
     }
 
-    private fun uploadAudioAndCreateComment(task: Task, audioFileToUpload: java.io.File, context: Context) {
+    private fun delayAndClearTextCommentStatus(durationMillis: Long = 3500L) {
         viewModelScope.launch {
-            audioProcessingMessage = "Подготовка к загрузке '${audioFileToUpload.name}'..."
-            val user = users[currentUserIndex]
-
-            val storageId = fetchUserStorageId(user)
-            if (storageId == null) {
-                audioProcessingMessage = "Ошибка: Не удалось найти хранилище для пользователя."
-                Timber.e("Failed to get storage ID for user ${user.userId}")
-                resetAudioRecordingState(clearMessageDelay = 5000L)
-                return@launch
+            delay(durationMillis)
+            // Очищаем сообщение, только если оно не было изменено за время задержки
+            if (textCommentStatusMessage?.startsWith("Отправка комментария...") == false && // Не "Отправка..."
+                textCommentStatusMessage?.contains("успешно добавлен") == true || // "успешно добавлен"
+                textCommentStatusMessage?.contains("Ошибка") == true || // или содержит "Ошибка"
+                textCommentStatusMessage?.contains("Failed") == true || // или "Failed"
+                textCommentStatusMessage?.contains("не удалось") == true) { // или "не удалось"
+                 // Это условие немного сложное, но идея в том, чтобы не стирать сообщение "Отправка..."
+                 // и стирать только финальные сообщения (успех или ошибка)
             }
-            Timber.d("Using storage ID: $storageId for user ${user.userId}")
-
-            audioProcessingMessage = "Загрузка файла '${audioFileToUpload.name}'..."
-            val uploadedFileId = uploadFileToStorage(user, storageId, audioFileToUpload)
-            if (uploadedFileId == null) {
-                audioProcessingMessage = "Ошибка: Не удалось загрузить аудиофайл."
-                Timber.e("Failed to upload audio file ${audioFileToUpload.name} for task ${task.id}")
-                resetAudioRecordingState(clearMessageDelay = 5000L)
-                return@launch
-            }
-            Timber.i("File ${audioFileToUpload.name} uploaded successfully. ID: $uploadedFileId")
-
-            audioProcessingMessage = "Создание комментария для '${task.title}'..."
-            val commentAdded = addCommentToTask(user, task.id, uploadedFileId)
-
-            if (commentAdded) {
-                audioProcessingMessage = "Аудиокомментарий успешно добавлен к '${task.title}'."
-                Timber.i("Audio comment successfully added to task ${task.id}")
-                audioFileToUpload.delete()
-            } else {
-                audioProcessingMessage = "Ошибка: Не удалось добавить комментарий к задаче '${task.title}'."
-                Timber.e("Failed to add comment to task ${task.id} after uploading file $uploadedFileId")
-            }
-            resetAudioRecordingState(clearMessageDelay = 5000L)
-        }
-    }
-
-    fun setAudioPermissionDeniedMessage() {
-        audioProcessingMessage = "Разрешение на запись аудио не предоставлено."
-        viewModelScope.launch {
-            delay(3000)
-            if (audioProcessingMessage == "Разрешение на запись аудио не предоставлено.") {
-                audioProcessingMessage = null
+            // Простое решение: всегда очищать, если оно не null
+            if (textCommentStatusMessage != null && textCommentStatusMessage != "Отправка комментария...") {
+                 textCommentStatusMessage = null
             }
         }
     }
+    // --- Конец функций для текстовых комментариев ---
 
-    private fun resetAudioRecordingState(clearMessageDelay: Long? = null) {
-        mediaRecorder?.release()
-        mediaRecorder = null
-        isRecordingAudio = false
-        audioOutputFile?.delete() // Удаляем файл, если он еще существует и не был обработан
-        audioOutputFile = null
-        currentRecordingTask = null
-        if (clearMessageDelay != null) {
-            viewModelScope.launch {
-                delay(clearMessageDelay)
-                audioProcessingMessage = null
-            }
-        } else {
-            audioProcessingMessage = null
-        }
-        Timber.d("Audio recording state reset.")
-    }
+    // Удаленные функции связанные с аудио:
+    // toggleAudioRecording, startAudioRecording, stopAudioRecordingAndProcess,
+    // fetchUserStorageId, makeStorageRequest, uploadFileToStorage, addCommentToTask (с файлом),
+    // uploadAudioAndCreateComment, setAudioPermissionDeniedMessage, resetAudioRecordingState.
 
     fun shareLogs(context: Context) {
         viewModelScope.launch {
@@ -2817,6 +2525,20 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
 
         Spacer(modifier = Modifier.height(16.dp)) // Уменьшаем отступ после верхней панели
 
+        // Диалог добавления текстового комментария
+        viewModel.showAddCommentDialogForTask?.let { task ->
+            AddTextCommentDialog(
+                taskTitle = task.title,
+                currentComment = viewModel.commentTextInput,
+                onCommentChange = { viewModel.commentTextInput = it },
+                onConfirm = { comment ->
+                    viewModel.submitTextComment(task.id, comment)
+                },
+                onDismiss = { viewModel.dismissAddCommentDialog() }
+            )
+        }
+
+
         val serviceState = viewModel.timerServiceState // Получаем состояние из ViewModel (TimerServiceState?)
 
         // Активный таймер (если есть) - переделан в одну строку
@@ -2918,19 +2640,19 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
         }
 
         // Список задач
-        // Сообщения о статусе операций (аудио, быстрое создание задачи, статус дня)
-        val audioMessage = viewModel.audioProcessingMessage
+        // Сообщения о статусе операций (быстрое создание задачи, статус дня, текстовый комментарий)
         val taskCreationMessage = viewModel.quickTaskCreationStatus
         val timemanMessage = viewModel.timemanInfoMessage
+        val textCommentMessage = viewModel.textCommentStatusMessage
 
-        val generalMessageToDisplay = timemanMessage ?: taskCreationMessage ?: audioMessage
+        val generalMessageToDisplay = textCommentMessage ?: timemanMessage ?: taskCreationMessage // Порядок приоритета: текст. коммент, день, задача
         if (generalMessageToDisplay != null) {
-            // Определение, является ли сообщение ошибкой (если viewModel.errorMessage установлен ИЛИ сообщение содержит "Ошибка")
-            // Это упрощенная проверка, можно улучшить, если сообщения об ошибках будут иметь более строгий формат
-            val isGeneralError = viewModel.errorMessage != null ||
+            // Определение, является ли сообщение ошибкой
+            val isGeneralError = viewModel.errorMessage != null || // Если есть глобальная ошибка
                                  generalMessageToDisplay.contains("Ошибка", ignoreCase = true) ||
                                  generalMessageToDisplay.contains("Failed", ignoreCase = true) ||
-                                 generalMessageToDisplay.contains("не удалось", ignoreCase = true)
+                                 generalMessageToDisplay.contains("не удалось", ignoreCase = true) ||
+                                 (textCommentMessage != null && !textCommentMessage.contains("успешно", ignoreCase = true)) // Сообщение о комменте не успешное
 
 
             Card(
@@ -2961,22 +2683,24 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
             ) {
                 items(viewModel.tasks, key = { task -> task.id }) { task ->
                     // Получаем состояние конкретно для этой задачи из общего состояния сервиса
-                val sState = viewModel.timerServiceState // TimerServiceState?
-                val isTimerRunningForThisTask = sState?.activeTaskId == task.id && sState.isEffectivelyPaused == false
-                val isTimerUserPausedForThisTask = sState?.activeTaskId == task.id && sState.isUserPaused == true
-                val isTimerSystemPausedForThisTask = sState?.activeTaskId == task.id && sState.isSystemPaused == true
+                    val sState = viewModel.timerServiceState // TimerServiceState?
+                    val isTimerRunningForThisTask = sState?.activeTaskId == task.id && sState.isEffectivelyPaused == false
+                    val isTimerUserPausedForThisTask = sState?.activeTaskId == task.id && sState.isUserPaused == true
+                    val isTimerSystemPausedForThisTask = sState?.activeTaskId == task.id && sState.isSystemPaused == true
 
-                TaskCard(
-                    task = task,
-                    onTimerToggle = { viewModel.toggleTimer(it) },
-                    onCompleteTask = { viewModel.completeTask(it) },
-                    isTimerRunningForThisTask = isTimerRunningForThisTask,
-                    isTimerUserPausedForThisTask = isTimerUserPausedForThisTask,
-                    isTimerSystemPausedForThisTask = isTimerSystemPausedForThisTask,
-                    viewModel = viewModel,
-                    context = context // Передаем context
-                )
-                Spacer(modifier = Modifier.height(10.dp))
+                    TaskCard(
+                        task = task,
+                        onTimerToggle = { viewModel.toggleTimer(it) },
+                        onCompleteTask = { viewModel.completeTask(it) },
+                        onAddCommentClick = { viewModel.prepareForTextComment(it) }, // Новый обработчик
+                        isTimerRunningForThisTask = isTimerRunningForThisTask,
+                        isTimerUserPausedForThisTask = isTimerUserPausedForThisTask,
+                        isTimerSystemPausedForThisTask = isTimerSystemPausedForThisTask,
+                        viewModel = viewModel,
+                        context = context // Передаем context
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
             }
         } // End of LazyColumn
 
@@ -3104,6 +2828,7 @@ fun TaskCard(
     task: Task,
     onTimerToggle: (Task) -> Unit,
     onCompleteTask: (Task) -> Unit,
+    onAddCommentClick: (Task) -> Unit, // Для открытия диалога добавления комментария
     isTimerRunningForThisTask: Boolean,
     isTimerUserPausedForThisTask: Boolean,
     isTimerSystemPausedForThisTask: Boolean,
@@ -3498,69 +3223,69 @@ fun TaskCard(
                     }
                 }
 
-                // Кнопка записи аудиокомментария (теперь доступна и для завершенных задач)
-                // if (!task.isCompleted) { // Условие удалено
-                    val context = LocalContext.current
-                    val isCurrentlyRecordingThisTask = viewModel.isRecordingAudio && viewModel.currentRecordingTask?.id == task.id
-
-                    // scheme определена выше в TaskCard
-                    val sErrorContainer = scheme.errorContainer
-                    val sSecondaryContainer = scheme.secondaryContainer
-                    val iconButtonBackgroundColor = remember(isCurrentlyRecordingThisTask, sErrorContainer, sSecondaryContainer) {
-                        if (isCurrentlyRecordingThisTask) sErrorContainer else sSecondaryContainer
-                    }
-
-                    val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
-                        contract = ActivityResultContracts.RequestPermission(),
-                        onResult = { isGranted ->
-                            if (isGranted) {
-                                viewModel.toggleAudioRecording(task, context)
-                            } else {
-                                viewModel.setAudioPermissionDeniedMessage() // Используем новый метод
-                            }
-                        }
-                    )
-                    val rememberedOnToggleAudioRecording = remember(task, context) {
-                        {
-                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                viewModel.toggleAudioRecording(task, context)
-                            } else {
-                                recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            }
-                        }
-                    }
-
+                // Кнопка добавления текстового комментария (доступна всегда, если задача не завершена и карточка раскрыта)
+                if (!task.isCompleted && hasDescription && isExpanded) {
                     IconButton(
-                        onClick = rememberedOnToggleAudioRecording,
+                        onClick = { onAddCommentClick(task) },
                         modifier = Modifier
-                            .heightIn(min = 52.dp)
-                            .shadow(elevation = 2.dp, shape = CircleShape) // Тень для IconButton
+                            .heightIn(min = 52.dp) // Сопоставимо с другими кнопками
+                            .shadow(elevation = 2.dp, shape = CircleShape)
                             .background(
-                                color = iconButtonBackgroundColor,
+                                color = MaterialTheme.colorScheme.secondaryContainer, // Или другой подходящий цвет
                                 shape = CircleShape
                             )
-                            .padding(horizontal = 8.dp),
-                        enabled = !viewModel.isRecordingAudio || isCurrentlyRecordingThisTask // Кнопка активна если не идет запись ИЛИ идет запись именно этой задачи
+                            .padding(horizontal = 8.dp) // Отступы внутри кнопки
                     ) {
-                        // scheme уже определена выше в TaskCard
-                        val sOnErrorContainer = scheme.onErrorContainer
-                        val sOnSecondaryContainer = scheme.onSecondaryContainer
-                        val iconAndTint = remember(isCurrentlyRecordingThisTask, sOnErrorContainer, sOnSecondaryContainer) {
-                            if (isCurrentlyRecordingThisTask) {
-                                Triple(Icons.Filled.Stop, "Остановить запись", sOnErrorContainer)
-                            } else {
-                                Triple(Icons.Filled.Mic, "Записать аудиокомментарий", sOnSecondaryContainer)
-                            }
-                        }
                         Icon(
-                            imageVector = iconAndTint.first,
-                            contentDescription = iconAndTint.second,
-                            tint = iconAndTint.third,
-                            modifier = Modifier.size(28.dp)
+                            imageVector = Icons.Filled.AddComment,
+                            contentDescription = "Добавить комментарий",
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer, // Цвет иконки
+                            modifier = Modifier.size(28.dp) // Размер иконки
                         )
                     }
-                // } // Закрывающая скобка от if (!task.isCompleted) удалена
+                }
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AddTextCommentDialog(
+    taskTitle: String,
+    currentComment: String,
+    onCommentChange: (String) -> Unit,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Комментарий к задаче: $taskTitle") },
+        text = {
+            OutlinedTextField(
+                value = currentComment,
+                onValueChange = onCommentChange,
+                label = { Text("Текст комментария") },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp), // Минимальная высота для удобного ввода
+                maxLines = 10 // Ограничение по количеству строк
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (currentComment.isNotBlank()) { // Отправляем только непустые комментарии
+                        onConfirm(currentComment)
+                    }
+                },
+                enabled = currentComment.isNotBlank() // Кнопка активна, только если комментарий не пуст
+            ) {
+                Text("Отправить")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Отмена")
+            }
+        }
+    )
 }
