@@ -3110,13 +3110,15 @@ fun TaskCard(
     viewModel: MainViewModel, // Передаем ViewModel для доступа к данным и функциям
     context: Context // Добавляем параметр context
 ) {
-    // Используем состояние из ViewModel для раскрытия карточки
-    val isExpanded = viewModel.expandedTaskIds.contains(task.id)
-    Timber.d("TaskCard for task ${task.id} ('${task.title}'), attachedFileIds: ${task.attachedFileIds}, isExpanded = $isExpanded")
+    // Определяем, есть ли у задачи описание и можно ли ее раскрывать
+    val hasDescription = task.description.isNotEmpty()
+    // Используем состояние из ViewModel для раскрытия карточки, только если есть описание
+    val isExpanded = if (hasDescription) viewModel.expandedTaskIds.contains(task.id) else false
+    Timber.d("TaskCard for task ${task.id} ('${task.title}'), hasDescription: $hasDescription, attachedFileIds: ${task.attachedFileIds}, isExpanded = $isExpanded")
 
-    // Загрузка чек-листов и деталей файлов при раскрытии карточки
-    LaunchedEffect(task.id, isExpanded) {
-        if (isExpanded) {
+    // Загрузка чек-листов и деталей файлов при раскрытии карточки (только если она может быть раскрыта и раскрыта)
+    LaunchedEffect(task.id, isExpanded, hasDescription) {
+        if (isExpanded && hasDescription) { // Добавлено условие hasDescription
             // Загрузка чек-листа
             if (viewModel.checklistsMap[task.id].isNullOrEmpty() && viewModel.loadingChecklistMap[task.id] != true) {
                 viewModel.fetchChecklistForTask(task.id)
@@ -3157,7 +3159,7 @@ fun TaskCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { viewModel.toggleTaskExpansion(task.id) }, // Используем метод из ViewModel
+            .then(if (hasDescription) Modifier.clickable { viewModel.toggleTaskExpansion(task.id) } else Modifier), // Кликабельно, только если есть описание
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp), // Увеличиваем тень для TaskCard
         colors = CardDefaults.elevatedCardColors(containerColor = cardContainerColor)
     ) {
@@ -3183,15 +3185,17 @@ fun TaskCard(
                         overflow = TextOverflow.Ellipsis
                     )
 
-                    // Иконка раскрытия
-                    Icon(
-                        imageVector = if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (isExpanded) "Свернуть" else "Развернуть",
-                        modifier = Modifier
-                            .size(28.dp) // Увеличиваем иконку
-                            .padding(start = 8.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    // Иконка раскрытия, только если есть описание
+                    if (hasDescription) {
+                        Icon(
+                            imageVector = if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = if (isExpanded) "Свернуть" else "Развернуть",
+                            modifier = Modifier
+                                .size(28.dp) // Увеличиваем иконку
+                                .padding(start = 8.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
                 // Отображение статуса задачи удалено
             }
@@ -3257,8 +3261,8 @@ fun TaskCard(
             }
 
 
-            // Развернутая информация
-            if (isExpanded) {
+            // Развернутая информация (только если есть описание и карточка раскрыта)
+            if (isExpanded && hasDescription) {
                 Spacer(modifier = Modifier.height(16.dp)) // Увеличиваем отступ
 
                 // Разделитель
