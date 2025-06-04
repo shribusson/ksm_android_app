@@ -265,7 +265,7 @@ class MainViewModel : ViewModel() {
     var showAddCommentDialogForTask by mutableStateOf<Task?>(null)
         private set
     var commentTextInput by mutableStateOf("")
-        private set
+        // private set // Removed private set to allow UI to update this
     var textCommentStatusMessage by mutableStateOf<String?>(null) // Сообщение о статусе добавления комментария
         private set
 
