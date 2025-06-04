@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause // Для иконки паузы
 import androidx.compose.material.icons.filled.Add // Для кнопки выпадающего списка быстрых задач
 import androidx.compose.material.icons.filled.PlayArrow // Для иконки старт/продолжить
+import androidx.compose.material.icons.filled.PowerSettingsNew // Для кнопки управления рабочим днем
 import androidx.compose.material.icons.filled.Refresh // Для кнопки "Обновить"
 import androidx.compose.material.icons.filled.Save // Для иконки сохранения (дискета)
 import androidx.compose.material.icons.filled.Stop // Для иконки остановки записи
@@ -182,6 +183,9 @@ data class TaskProcessingOutput(
     val processingError: String? = null // Ошибка, возникшая во время обработки
 )
 
+// Enum для статусов Timeman API
+enum class TimemanApiStatus { OPENED, PAUSED, CLOSED, UNKNOWN }
+
 class MainViewModel : ViewModel() {
     private val client = OkHttpClient()
 
@@ -254,6 +258,16 @@ class MainViewModel : ViewModel() {
 
     // Состояние для обратной связи при быстром создании задач
     var quickTaskCreationStatus by mutableStateOf<String?>(null)
+        private set
+
+    // Состояния для управления рабочим днем
+    var timemanCurrentApiStatus by mutableStateOf(TimemanApiStatus.UNKNOWN)
+        private set
+    var timemanStatusLoading by mutableStateOf(false) // Индикатор загрузки статуса дня
+        private set
+    var timemanActionInProgress by mutableStateOf(false) // Индикатор выполнения действия (открыть/закрыть день)
+        private set
+    var timemanInfoMessage by mutableStateOf<String?>(null) // Сообщения о статусе операций с рабочим днем
         private set
 
 
@@ -332,9 +346,8 @@ class MainViewModel : ViewModel() {
         loadTasks()
         startPeriodicUpdates()
         startPeriodicTaskUpdates()
-        // startTimeUpdates() // Удалено
-        // startUniversalTimerLoop() // Удалено, логика таймера теперь в сервисе
         val currentUserForInit = users[currentUserIndex]
+        fetchTimemanStatus(currentUserForInit) // Получаем статус рабочего дня при инициализации
         timerService?.setCurrentUser(currentUserForInit.userId, currentUserForInit.name) // Уведомляем сервис, если он уже подключен
         isInitialized = true
         Timber.d("MainViewModel initialized. Current user: ${users[currentUserIndex].name}")
@@ -348,22 +361,16 @@ class MainViewModel : ViewModel() {
         isLoading = true // Показываем загрузку немедленно
         tasks = emptyList() // Очищаем задачи предыдущего пользователя
         errorMessage = null // Сбрасываем предыдущие ошибки
+        timemanInfoMessage = null // Сбрасываем сообщение о статусе дня
 
         saveCurrentUserIndex(context, index) // Сохраняем новый индекс
         currentUserIndex = index
         val switchedUser = users[index]
         timerService?.setCurrentUser(switchedUser.userId, switchedUser.name) // Уведомляем сервис о смене пользователя
 
-        // Если таймер был активен для предыдущего пользователя, его нужно остановить (или решить, как обрабатывать)
-        // Текущая логика сервиса предполагает один активный таймер. При смене пользователя,
-        // если таймер был запущен, он продолжит тикать "для нового пользователя", если не остановить явно.
-        // Пока что, если таймер был активен, он просто "переключится" на нового пользователя без сброса.
-        // Это может потребовать доработки, если нужно сохранять время для предыдущего пользователя.
-        // Для простоты, пока оставляем так. ViewModel может решить остановить таймер перед сменой.
-        // Например, можно вызвать timerService?.stopTaskTimer() здесь, если это нужно.
-
         updateWorkStatus() // Обновляем статус рабочего дня для нового пользователя
         loadTasks() // Загружаем задачи для нового пользователя
+        fetchTimemanStatus(switchedUser) // Получаем статус рабочего дня для нового пользователя
     }
 
     fun loadTasks() {
@@ -1504,28 +1511,10 @@ class MainViewModel : ViewModel() {
             Timber.i("Global work status changing from $previousGlobalStatus to $newGlobalWorkStatus")
             workStatus = newGlobalWorkStatus // Обновляем глобальный статус для UI
 
-            // Применяем timeman действия для ТЕКУЩЕГО пользователя, если ViewModel им управляет
-            // или для всех, если это глобальная логика.
-            // Пока оставим для всех пользователей, как было.
-            users.forEach { user ->
-                Timber.d("Applying timeman actions for user ${user.name} due to global status change from $previousGlobalStatus to $newGlobalWorkStatus")
-                when {
-                    (previousGlobalStatus == WorkStatus.BEFORE_WORK || previousGlobalStatus == WorkStatus.BREAK || previousGlobalStatus == WorkStatus.LUNCH) && newGlobalWorkStatus == WorkStatus.WORKING -> {
-                        timemanOpenWorkDay(user)
-                    }
-                    previousGlobalStatus == WorkStatus.WORKING && (newGlobalWorkStatus == WorkStatus.BREAK || newGlobalWorkStatus == WorkStatus.LUNCH) -> {
-                        timemanPauseWorkDay(user)
-                    }
-                    previousGlobalStatus == WorkStatus.WORKING && newGlobalWorkStatus == WorkStatus.AFTER_WORK -> {
-                        timemanCloseWorkDay(user)
-                    }
-                    else -> {
-                        Timber.d("No specific timeman action for user ${user.name} for transition from $previousGlobalStatus to $newGlobalWorkStatus.")
-                    }
-                }
-            }
+            // Автоматические вызовы timemanOpenWorkDay, timemanPauseWorkDay, timemanCloseWorkDay УДАЛЕНЫ.
+            // Управление рабочим днем теперь ручное через кнопку.
 
-            // Обновляем состояние системной паузы для таймера в СЕРВИСЕ
+            // Обновляем состояние системной паузы для таймера в СЕРВИСЕ (эта логика остается)
             val currentServiceState = timerServiceState
             if (currentServiceState?.activeTaskId != null) { // Только если есть активный таймер
                 when {
@@ -1548,74 +1537,256 @@ class MainViewModel : ViewModel() {
 
 
     // --- Timeman API Calls ---
-    private fun timemanOpenWorkDay(user: User) {
+
+    private fun setTimedTimemanInfoMessage(message: String, durationMillis: Long = 3500L) {
+        timemanInfoMessage = message
+        viewModelScope.launch {
+            delay(durationMillis)
+            if (timemanInfoMessage == message) { // Очищаем, только если это то же самое сообщение
+                timemanInfoMessage = null
+            }
+        }
+    }
+
+    fun fetchTimemanStatus(user: User = users[currentUserIndex], showLoadingIndicator: Boolean = true, onComplete: ((TimemanApiStatus) -> Unit)? = null) {
+        if (showLoadingIndicator) timemanStatusLoading = true
+        // timemanInfoMessage = null // Не очищаем здесь, чтобы не сбрасывать сообщения от open/close
+        val url = "${user.webhookUrl}timeman.status"
+        val request = Request.Builder().url(url).build()
+        Timber.d("Fetching timeman status for user ${user.name}...")
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                viewModelScope.launch {
+                    Timber.e(e, "Failed to fetch timeman status for user ${user.name}")
+                    timemanCurrentApiStatus = TimemanApiStatus.UNKNOWN
+                    if (showLoadingIndicator) timemanStatusLoading = false
+                    errorMessage = "Ошибка сети (статус дня): ${e.message}"
+                    onComplete?.invoke(TimemanApiStatus.UNKNOWN)
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                viewModelScope.launch {
+                    var newApiStatus = TimemanApiStatus.UNKNOWN
+                    try {
+                        val responseBody = response.body?.string()
+                        if (response.isSuccessful && responseBody != null) {
+                            Timber.d("Timeman status response for ${user.name}: $responseBody")
+                            val json = JSONObject(responseBody)
+                            if (json.has("result")) {
+                                val result = json.getJSONObject("result")
+                                val statusStr = result.optString("STATUS")
+                                newApiStatus = when (statusStr) {
+                                    "OPENED" -> TimemanApiStatus.OPENED
+                                    "PAUSED" -> TimemanApiStatus.PAUSED
+                                    "CLOSED" -> TimemanApiStatus.CLOSED
+                                    else -> {
+                                        Timber.w("Unknown timeman status string: '$statusStr' for user ${user.name}")
+                                        TimemanApiStatus.UNKNOWN
+                                    }
+                                }
+                                // Можно добавить информацию о времени начала/длительности в timemanInfoMessage, если нужно
+                                // val duration = result.optString("DURATION", "")
+                                // val timeStart = result.optString("TIME_START", "")
+                                // setTimedTimemanInfoMessage("Статус: $newApiStatus, Начало: $timeStart, Длит: $duration")
+                            } else if (json.has("error")) {
+                                val errorDesc = json.optString("error_description", "API Error")
+                                Timber.w("API error fetching timeman status for ${user.name}: $errorDesc")
+                                errorMessage = "Ошибка API (статус дня): $errorDesc"
+                            }
+                        } else {
+                            Timber.w("Failed to fetch timeman status for ${user.name}. Code: ${response.code}, Body: $responseBody")
+                            errorMessage = "Ошибка сервера (статус дня): ${response.code}"
+                        }
+                    } catch (e: Exception) {
+                        Timber.e(e, "Error parsing timeman status for ${user.name}")
+                        errorMessage = "Ошибка обработки (статус дня): ${e.message}"
+                    } finally {
+                        timemanCurrentApiStatus = newApiStatus
+                        if (showLoadingIndicator) timemanStatusLoading = false
+                        onComplete?.invoke(newApiStatus)
+                    }
+                }
+            }
+        })
+    }
+
+    fun manualToggleWorkdayStatus() {
+        val user = users[currentUserIndex]
+        timemanActionInProgress = true // Блокируем кнопку
+        timemanInfoMessage = null      // Очищаем предыдущие сообщения
+        errorMessage = null            // Очищаем предыдущие ошибки
+
+        fetchTimemanStatus(user, showLoadingIndicator = false) { currentFetchedStatus ->
+            viewModelScope.launch { // Убедимся, что мы в корутине ViewModel
+                when (currentFetchedStatus) {
+                    TimemanApiStatus.OPENED, TimemanApiStatus.PAUSED -> {
+                        timemanCloseWorkDay(user) { success ->
+                            if (success) {
+                                setTimedTimemanInfoMessage("Рабочий день завершен.")
+                                fetchTimemanStatus(user, showLoadingIndicator = false) // Обновляем статус для UI
+                            } // Сообщение об ошибке уже установлено в timemanCloseWorkDay
+                            timemanActionInProgress = false // Разблокируем кнопку
+                        }
+                    }
+                    TimemanApiStatus.CLOSED, TimemanApiStatus.UNKNOWN -> {
+                        timemanOpenWorkDay(user) { success ->
+                            if (success) {
+                                setTimedTimemanInfoMessage("Рабочий день начат.")
+                                fetchTimemanStatus(user, showLoadingIndicator = false) // Обновляем статус для UI
+                            } // Сообщение об ошибке уже установлено в timemanOpenWorkDay
+                            timemanActionInProgress = false // Разблокируем кнопку
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun timemanOpenWorkDay(user: User, onComplete: ((Boolean) -> Unit)? = null) {
         Timber.i("Attempting to open workday for user ${user.name} (ID: ${user.userId})")
         val url = "${user.webhookUrl}timeman.open"
         val request = Request.Builder()
             .url(url)
-            .post(FormBody.Builder().build()) // Обычно параметры не нужны
+            .post(FormBody.Builder().build())
             .build()
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 Timber.e(e, "Failed to open workday for user ${user.name}")
+                viewModelScope.launch {
+                    errorMessage = "Сеть (открытие дня): ${e.message}"
+                    onComplete?.invoke(false)
+                }
             }
             override fun onResponse(call: Call, response: Response) {
                 val responseBody = response.body?.string()
-                if (response.isSuccessful) {
-                    Timber.i("Successfully opened workday for user ${user.name}. Response: $responseBody")
-                } else {
-                    Timber.w("Failed to open workday for user ${user.name}. Code: ${response.code}. Response: $responseBody")
+                viewModelScope.launch {
+                    var success = false
+                    if (response.isSuccessful && responseBody != null) {
+                        try {
+                            val json = JSONObject(responseBody)
+                            if (json.has("result")) { // Bitrix часто возвращает {"result": true} или объект с деталями
+                                success = true
+                                Timber.i("Successfully opened workday for user ${user.name}. Response: $responseBody")
+                            } else if (json.has("error")) {
+                                val errorDesc = json.optString("error_description", "API Error")
+                                Timber.w("API error opening workday for ${user.name}: $errorDesc. Response: $responseBody")
+                                errorMessage = "API (открытие дня): $errorDesc"
+                            } else {
+                                Timber.w("Unknown response opening workday for ${user.name}. Code: ${response.code}. Response: $responseBody")
+                                errorMessage = "Неизвестный ответ (открытие дня)."
+                            }
+                        } catch (e: Exception) {
+                            Timber.e(e, "Error parsing open workday response for ${user.name}. Response: $responseBody")
+                            errorMessage = "Ошибка парсинга (открытие дня)."
+                        }
+                    } else {
+                        Timber.w("Failed to open workday for user ${user.name}. Code: ${response.code}. Response: $responseBody")
+                        errorMessage = "Сервер (открытие дня): ${response.code}"
+                    }
+                    onComplete?.invoke(success)
+                    response.close()
                 }
-                response.close()
             }
         })
     }
 
-    private fun timemanPauseWorkDay(user: User) {
+    private fun timemanPauseWorkDay(user: User, onComplete: ((Boolean) -> Unit)? = null) { // Добавлен колбэк, хотя пока не используется для ручного вызова
         Timber.i("Attempting to pause workday for user ${user.name} (ID: ${user.userId})")
         val url = "${user.webhookUrl}timeman.pause"
         val request = Request.Builder()
             .url(url)
-            .post(FormBody.Builder().build()) // Обычно параметры не нужны
+            .post(FormBody.Builder().build())
             .build()
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 Timber.e(e, "Failed to pause workday for user ${user.name}")
+                viewModelScope.launch {
+                    errorMessage = "Сеть (пауза дня): ${e.message}"
+                    onComplete?.invoke(false)
+                }
             }
             override fun onResponse(call: Call, response: Response) {
                 val responseBody = response.body?.string()
-                if (response.isSuccessful) {
-                    Timber.i("Successfully paused workday for user ${user.name}. Response: $responseBody")
-                } else {
-                    Timber.w("Failed to pause workday for user ${user.name}. Code: ${response.code}. Response: $responseBody")
+                viewModelScope.launch {
+                    var success = false
+                    if (response.isSuccessful && responseBody != null) {
+                         try {
+                            val json = JSONObject(responseBody)
+                            if (json.has("result")) {
+                                success = true
+                                Timber.i("Successfully paused workday for user ${user.name}. Response: $responseBody")
+                            } else if (json.has("error")) {
+                                val errorDesc = json.optString("error_description", "API Error")
+                                Timber.w("API error pausing workday for ${user.name}: $errorDesc. Response: $responseBody")
+                                errorMessage = "API (пауза дня): $errorDesc"
+                            } else {
+                                Timber.w("Unknown response pausing workday for ${user.name}. Code: ${response.code}. Response: $responseBody")
+                                errorMessage = "Неизвестный ответ (пауза дня)."
+                            }
+                        } catch (e: Exception) {
+                            Timber.e(e, "Error parsing pause workday response for ${user.name}. Response: $responseBody")
+                            errorMessage = "Ошибка парсинга (пауза дня)."
+                        }
+                    } else {
+                        Timber.w("Failed to pause workday for user ${user.name}. Code: ${response.code}. Response: $responseBody")
+                        errorMessage = "Сервер (пауза дня): ${response.code}"
+                    }
+                    onComplete?.invoke(success)
+                    response.close()
                 }
-                response.close()
             }
         })
     }
 
-    private fun timemanCloseWorkDay(user: User) {
+    private fun timemanCloseWorkDay(user: User, onComplete: ((Boolean) -> Unit)? = null) {
         Timber.i("Attempting to close workday for user ${user.name} (ID: ${user.userId})")
         val url = "${user.webhookUrl}timeman.close"
         val request = Request.Builder()
             .url(url)
-            .post(FormBody.Builder().build()) // Обычно параметры не нужны
+            .post(FormBody.Builder().build())
             .build()
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 Timber.e(e, "Failed to close workday for user ${user.name}")
+                viewModelScope.launch {
+                    errorMessage = "Сеть (закрытие дня): ${e.message}"
+                    onComplete?.invoke(false)
+                }
             }
             override fun onResponse(call: Call, response: Response) {
                 val responseBody = response.body?.string()
-                if (response.isSuccessful) {
-                    Timber.i("Successfully closed workday for user ${user.name}. Response: $responseBody")
-                } else {
-                    Timber.w("Failed to close workday for user ${user.name}. Code: ${response.code}. Response: $responseBody")
+                viewModelScope.launch {
+                    var success = false
+                    if (response.isSuccessful && responseBody != null) {
+                        try {
+                            val json = JSONObject(responseBody)
+                            if (json.has("result")) {
+                                success = true
+                                Timber.i("Successfully closed workday for user ${user.name}. Response: $responseBody")
+                            } else if (json.has("error")) {
+                                val errorDesc = json.optString("error_description", "API Error")
+                                Timber.w("API error closing workday for ${user.name}: $errorDesc. Response: $responseBody")
+                                errorMessage = "API (закрытие дня): $errorDesc"
+                            } else {
+                                Timber.w("Unknown response closing workday for ${user.name}. Code: ${response.code}. Response: $responseBody")
+                                errorMessage = "Неизвестный ответ (закрытие дня)."
+                            }
+                        } catch (e: Exception) {
+                            Timber.e(e, "Error parsing close workday response for ${user.name}. Response: $responseBody")
+                            errorMessage = "Ошибка парсинга (закрытие дня)."
+                        }
+                    } else {
+                        Timber.w("Failed to close workday for user ${user.name}. Code: ${response.code}. Response: $responseBody")
+                        errorMessage = "Сервер (закрытие дня): ${response.code}"
+                    }
+                    onComplete?.invoke(success)
+                    response.close()
                 }
-                response.close()
             }
         })
     }
@@ -2510,6 +2681,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                 }
             }
 
+            // Кнопка управления рабочим днем
+            WorkDayControlButton(viewModel)
+
             // Блок для быстрых задач (иконки или выпадающий список)
             if (viewModel.quickTaskDisplayMode == MainViewModel.QuickTaskDisplayMode.ICONS) {
                 Row(
@@ -2744,16 +2918,19 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
         }
 
         // Список задач
-        // Сообщения о статусе операций (аудио, быстрое создание задачи)
+        // Сообщения о статусе операций (аудио, быстрое создание задачи, статус дня)
         val audioMessage = viewModel.audioProcessingMessage
         val taskCreationMessage = viewModel.quickTaskCreationStatus
+        val timemanMessage = viewModel.timemanInfoMessage
 
-        if (audioMessage != null || taskCreationMessage != null) {
-            val messageToDisplay = taskCreationMessage ?: audioMessage // Приоритет у сообщения о создании задачи
-            // Проверяем, является ли сообщение об ошибке (если errorMessage установлен И quickTaskCreationStatus содержит "Ошибка")
-            // или если audioProcessingMessage содержит "Ошибка" (на случай ошибок аудио без установки errorMessage)
-            val isError = (viewModel.errorMessage != null && taskCreationMessage?.contains("Ошибка", ignoreCase = true) == true) ||
-                          (audioMessage?.contains("Ошибка", ignoreCase = true) == true && taskCreationMessage == null)
+        val generalMessageToDisplay = timemanMessage ?: taskCreationMessage ?: audioMessage
+        if (generalMessageToDisplay != null) {
+            // Определение, является ли сообщение ошибкой (если viewModel.errorMessage установлен ИЛИ сообщение содержит "Ошибка")
+            // Это упрощенная проверка, можно улучшить, если сообщения об ошибках будут иметь более строгий формат
+            val isGeneralError = viewModel.errorMessage != null ||
+                                 generalMessageToDisplay.contains("Ошибка", ignoreCase = true) ||
+                                 generalMessageToDisplay.contains("Failed", ignoreCase = true) ||
+                                 generalMessageToDisplay.contains("не удалось", ignoreCase = true)
 
 
             Card(
@@ -2762,17 +2939,18 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                     .padding(vertical = 8.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                 colors = CardDefaults.elevatedCardColors(
-                    containerColor = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                    containerColor = if (isGeneralError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer // Используем tertiary для инфо
                 )
             ) {
                 Text(
-                    text = messageToDisplay!!, // messageToDisplay не будет null из-за условия if
+                    text = generalMessageToDisplay,
                     modifier = Modifier.padding(16.dp),
-                    color = if (isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                    color = if (isGeneralError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer,
                     textAlign = TextAlign.Center
                 )
             }
         }
+
 
         // Box to hold LazyColumn and the top fading edge effect
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -2869,6 +3047,56 @@ fun WorkStatusIcon(workStatus: WorkStatus, modifier: Modifier = Modifier) { // �
             .padding(10.dp) // Увеличиваем отступ
     )
 }
+
+@Composable
+fun WorkDayControlButton(viewModel: MainViewModel) {
+    val timemanStatus = viewModel.timemanCurrentApiStatus
+    val isLoading = viewModel.timemanStatusLoading || viewModel.timemanActionInProgress
+    val context = LocalContext.current // Для возможных Toast или других действий
+
+    val buttonText = when (timemanStatus) {
+        TimemanApiStatus.OPENED, TimemanApiStatus.PAUSED -> "Завершить день"
+        TimemanApiStatus.CLOSED, TimemanApiStatus.UNKNOWN -> "Начать день"
+    }
+    val buttonIcon = when (timemanStatus) {
+        TimemanApiStatus.OPENED, TimemanApiStatus.PAUSED -> Icons.Filled.PowerSettingsNew // Или Stop, EventBusy
+        TimemanApiStatus.CLOSED, TimemanApiStatus.UNKNOWN -> Icons.Filled.PlayArrow // Или PowerSettingsNew с другим цветом
+    }
+    val buttonColors = ButtonDefaults.buttonColors(
+        containerColor = when (timemanStatus) {
+            TimemanApiStatus.OPENED, TimemanApiStatus.PAUSED -> MaterialTheme.colorScheme.errorContainer
+            TimemanApiStatus.CLOSED, TimemanApiStatus.UNKNOWN -> MaterialTheme.colorScheme.primaryContainer
+        },
+        contentColor = when (timemanStatus) {
+            TimemanApiStatus.OPENED, TimemanApiStatus.PAUSED -> MaterialTheme.colorScheme.onErrorContainer
+            TimemanApiStatus.CLOSED, TimemanApiStatus.UNKNOWN -> MaterialTheme.colorScheme.onPrimaryContainer
+        }
+    )
+
+    Button(
+        onClick = { viewModel.manualToggleWorkdayStatus() },
+        enabled = !isLoading,
+        colors = buttonColors,
+        modifier = Modifier.height(56.dp) // Сопоставимо с размером аватаров и иконок быстрых задач
+    ) {
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(24.dp),
+                strokeWidth = 2.dp,
+                color = LocalContentColor.current // Цвет индикатора будет соответствовать цвету текста кнопки
+            )
+        } else {
+            Icon(
+                imageVector = buttonIcon,
+                contentDescription = buttonText,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(buttonText, fontSize = 14.sp)
+        }
+    }
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
