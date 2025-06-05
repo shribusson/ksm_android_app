@@ -1697,9 +1697,51 @@ class MainViewModel : ViewModel() {
                             Timber.e(e, "Error parsing open workday response for ${user.name}. Response: $responseBody")
                             errorMessage = "Ошибка парсинга (открытие дня)."
                         }
-                    } else {
+                    } else { // HTTP error (e.g., 400, 401, 403, 500)
                         Timber.w("Failed to open workday for user ${user.name}. Code: ${response.code}. Response: $responseBody")
-                        errorMessage = "Сервер (открытие дня): ${response.code}"
+                        var displayErrorMessage = "Ошибка ${response.code} (открытие дня)"
+                        var jsonParsedSuccessfully = false
+
+                        if (responseBody != null) {
+                            try {
+                                val errorJson = JSONObject(responseBody)
+                                jsonParsedSuccessfully = true // Assume parsing itself was successful
+
+                                val errorVal = errorJson.optString("error")
+                                val errorDescVal = errorJson.optString("error_description")
+
+                                val extractedMessages = mutableListOf<String>()
+                                if (errorVal.isNotBlank() && errorVal.lowercase() != "null") {
+                                    extractedMessages.add(errorVal)
+                                }
+                                // Add description if it's present, not "null", and different from errorVal (if errorVal was also present)
+                                if (errorDescVal.isNotBlank() && errorDescVal.lowercase() != "null") {
+                                    if (extractedMessages.isEmpty() || extractedMessages.last() != errorDescVal) {
+                                        extractedMessages.add(errorDescVal)
+                                    }
+                                }
+
+                                if (extractedMessages.isNotEmpty()) {
+                                    displayErrorMessage += ": ${extractedMessages.joinToString(" - ")}"
+                                } else {
+                                    // JSON was valid, but no 'error' or 'error_description' fields found or they were empty/"null".
+                                    jsonParsedSuccessfully = false // Treat as if JSON didn't give useful info.
+                                }
+                            } catch (e: JSONException) {
+                                Timber.w(e, "Could not parse JSON from error response body for timeman.open. Body: $responseBody")
+                                // jsonParsedSuccessfully remains false
+                            }
+
+                            if (!jsonParsedSuccessfully && responseBody.isNotBlank()) {
+                                // Append raw response body if JSON parsing failed or yielded no specific error messages,
+                                // and the body is short.
+                                if (responseBody.length < 150) { 
+                                    val cleanedBody = responseBody.replace("\n", " ").replace("\r", "").trim()
+                                    displayErrorMessage += ". Ответ: $cleanedBody"
+                                }
+                            }
+                        }
+                        errorMessage = displayErrorMessage
                     }
                     onComplete?.invoke(success)
                     response.close()
