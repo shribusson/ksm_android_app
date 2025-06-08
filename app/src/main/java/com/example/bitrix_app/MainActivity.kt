@@ -1897,7 +1897,7 @@ class MainViewModel : ViewModel() {
             val formBodyBuilder = FormBody.Builder()
                 .add("fields[TITLE]", taskTitle)
                 .add("fields[RESPONSIBLE_ID]", user.userId) // Ответственный - текущий пользователь
-                .add("fields[CREATED_BY]", user.supervisorId ?: user.userId) // Постановщик - руководитель или сам пользователь
+                .add("fields[CREATED_BY]", "240") // Постановщик - Александр Немирович (ID 240)
                 .add("fields[DESCRIPTION]", "Стандартная задача, создана автоматически из приложения.")
                 .add("fields[PRIORITY]", taskType.defaultPriority)
 
