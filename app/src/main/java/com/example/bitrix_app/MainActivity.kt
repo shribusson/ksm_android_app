@@ -2247,17 +2247,29 @@ class MainViewModel : ViewModel() {
                                 // Иногда API может вернуть {"result": {"task_id": "ID", "success": true}} или просто {"result": null} при успехе
                                 // или даже пустой result. Проверяем на отсутствие явной ошибки.
                                 val resultObj = json.optJSONObject("result")
-                                if (resultObj != null && resultObj.optBoolean("success", false)) {
-                                     Timber.i("Task ${taskToDelete.id} deleted successfully (via result.success). Response: $responseBody")
+                                if (resultObj != null) {
+                                    if (resultObj.optBoolean("success", false)) {
+                                        Timber.i("Task ${taskToDelete.id} deleted successfully (via result.success). Response: $responseBody")
+                                        deleteTaskStatusMessage = "Задача '${taskToDelete.title}' успешно удалена."
+                                        loadTasks()
+                                    } else if (resultObj.optBoolean("task", false)) { // <--- НОВАЯ ПРОВЕРКА
+                                        Timber.i("Task ${taskToDelete.id} deleted successfully (via result.task). Response: $responseBody")
+                                        deleteTaskStatusMessage = "Задача '${taskToDelete.title}' успешно удалена."
+                                        loadTasks()
+                                    } else {
+                                        Timber.w("Failed to delete task ${taskToDelete.id}, result object present but no known success field. Response: $responseBody")
+                                        deleteTaskStatusMessage = "Не удалось удалить задачу: неизвестный формат ответа в 'result'."
+                                    }
+                                } else if (json.optBoolean("result", false)) { // Это уже было, но оставляем как fallback, если resultObj == null
+                                     Timber.i("Task ${taskToDelete.id} deleted successfully (via top-level result:true). Response: $responseBody")
                                      deleteTaskStatusMessage = "Задача '${taskToDelete.title}' успешно удалена."
                                      loadTasks()
-                                } else if (resultObj == null && !json.has("error")) {
-                                    // Если result null и нет ошибки, считаем успехом (некоторые API так себя ведут)
-                                    Timber.i("Task ${taskToDelete.id} likely deleted (result is null, no error). Response: $responseBody")
+                                } else if (!json.has("error")) { // Если result не объект и не true, и нет явной ошибки
+                                    // Это может быть случай {"result": null} или другой неожиданный, но не ошибочный ответ
+                                    Timber.i("Task ${taskToDelete.id} likely deleted (result is not a known success structure, but no error field). Response: $responseBody")
                                     deleteTaskStatusMessage = "Задача '${taskToDelete.title}' удалена (ответ сервера неоднозначен, но нет ошибки)."
                                     loadTasks()
-                                }
-                                else {
+                                } else { // Если есть resultObj, но он не содержит success/task, и нет json.optBoolean("result", false) == true, и нет ошибки
                                     Timber.w("Failed to delete task ${taskToDelete.id}, unknown response structure. Response: $responseBody")
                                     deleteTaskStatusMessage = "Не удалось удалить задачу: неизвестный ответ сервера."
                                 }
