@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.PowerSettingsNew // Для кно�
 import androidx.compose.material.icons.filled.Refresh // Для кнопки "Обновить"
 import androidx.compose.material.icons.filled.Save // Для иконки сохранения (дискета)
 import androidx.compose.material.icons.filled.Stop // Для иконки остановки записи
+import androidx.compose.material.icons.filled.Delete // Для иконки удаления
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -58,6 +59,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.ExperimentalFoundationApi // Для combinedClickable
+import androidx.compose.foundation.combinedClickable // Для long press
 import androidx.activity.compose.rememberLauncherForActivityResult // Для запроса разрешений
 import androidx.activity.result.contract.ActivityResultContracts // Для запроса разрешений
 import androidx.lifecycle.ViewModel
@@ -284,6 +287,12 @@ class MainViewModel : ViewModel() {
     var timemanActionInProgress by mutableStateOf(false) // Индикатор выполнения действия (открыть/закрыть день)
         private set
     var timemanInfoMessage by mutableStateOf<String?>(null) // Сообщения о статусе операций с рабочим днем
+        private set
+
+    // Состояния для диалога подтверждения удаления задачи
+    var showDeleteConfirmDialogForTask by mutableStateOf<Task?>(null)
+        private set
+    var deleteTaskStatusMessage by mutableStateOf<String?>(null)
         private set
 
 
@@ -2182,6 +2191,102 @@ class MainViewModel : ViewModel() {
         Timber.i("exportDetailedLogs called, invoking shareLogs.")
         shareLogs(context)
     }
+
+    // --- Функции для удаления задач ---
+    fun requestDeleteTask(task: Task) {
+        showDeleteConfirmDialogForTask = task
+        deleteTaskStatusMessage = null // Сбрасываем предыдущее сообщение
+        errorMessage = null // Сбрасываем общую ошибку
+        Timber.d("Requested deletion for task: ${task.title} (ID: ${task.id})")
+    }
+
+    fun dismissDeleteTaskDialog() {
+        showDeleteConfirmDialogForTask = null
+        Timber.d("Delete task dialog dismissed.")
+    }
+
+    fun confirmDeleteTask() {
+        val taskToDelete = showDeleteConfirmDialogForTask ?: return
+        dismissDeleteTaskDialog() // Скрываем диалог сразу
+
+        val user = users[currentUserIndex]
+        deleteTaskStatusMessage = "Удаление задачи '${taskToDelete.title}'..."
+        Timber.i("Confirming deletion for task ${taskToDelete.id} by user ${user.name}")
+
+        val url = "${user.webhookUrl}tasks.task.delete"
+        val formBody = FormBody.Builder()
+            .add("taskId", taskToDelete.id)
+            .build()
+
+        val request = Request.Builder().url(url).post(formBody).build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                viewModelScope.launch {
+                    Timber.e(e, "Failed to delete task ${taskToDelete.id}")
+                    deleteTaskStatusMessage = "Ошибка сети при удалении задачи."
+                    delayAndClearDeleteTaskStatus()
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                viewModelScope.launch {
+                    val responseBody = response.body?.string()
+                    if (response.isSuccessful && responseBody != null) {
+                        try {
+                            val json = JSONObject(responseBody)
+                            // {"result":true,"time":{"start":1717827895.120511,"finish":1717827895.156878,"duration":0.036366939544677734,"processing":0.00007009506225585938,"date_start":"2024-06-08T09:24:55+03:00","date_finish":"2024-06-08T09:24:55+03:00"}}
+                            if (json.optBoolean("result", false)) {
+                                Timber.i("Task ${taskToDelete.id} deleted successfully. Response: $responseBody")
+                                deleteTaskStatusMessage = "Задача '${taskToDelete.title}' успешно удалена."
+                                loadTasks() // Перезагружаем список задач
+                            } else if (json.has("error")) {
+                                val errorDesc = json.optString("error_description", "Не удалось удалить задачу")
+                                Timber.w("API error deleting task ${taskToDelete.id}: $errorDesc. Response: $responseBody")
+                                deleteTaskStatusMessage = "Ошибка API: $errorDesc"
+                            } else {
+                                // Иногда API может вернуть {"result": {"task_id": "ID", "success": true}} или просто {"result": null} при успехе
+                                // или даже пустой result. Проверяем на отсутствие явной ошибки.
+                                val resultObj = json.optJSONObject("result")
+                                if (resultObj != null && resultObj.optBoolean("success", false)) {
+                                     Timber.i("Task ${taskToDelete.id} deleted successfully (via result.success). Response: $responseBody")
+                                     deleteTaskStatusMessage = "Задача '${taskToDelete.title}' успешно удалена."
+                                     loadTasks()
+                                } else if (resultObj == null && !json.has("error")) {
+                                    // Если result null и нет ошибки, считаем успехом (некоторые API так себя ведут)
+                                    Timber.i("Task ${taskToDelete.id} likely deleted (result is null, no error). Response: $responseBody")
+                                    deleteTaskStatusMessage = "Задача '${taskToDelete.title}' удалена (ответ сервера неоднозначен, но нет ошибки)."
+                                    loadTasks()
+                                }
+                                else {
+                                    Timber.w("Failed to delete task ${taskToDelete.id}, unknown response structure. Response: $responseBody")
+                                    deleteTaskStatusMessage = "Не удалось удалить задачу: неизвестный ответ сервера."
+                                }
+                            }
+                        } catch (e: JSONException) {
+                            Timber.e(e, "Error parsing delete task response for ${taskToDelete.id}. Response: $responseBody")
+                            deleteTaskStatusMessage = "Ошибка обработки ответа сервера при удалении."
+                        }
+                    } else {
+                        Timber.w("Failed to delete task ${taskToDelete.id}. Code: ${response.code}. Response: $responseBody")
+                        deleteTaskStatusMessage = "Ошибка сервера при удалении: ${response.code}"
+                    }
+                    delayAndClearDeleteTaskStatus()
+                    response.close()
+                }
+            }
+        })
+    }
+
+    private fun delayAndClearDeleteTaskStatus(durationMillis: Long = 3500L) {
+        viewModelScope.launch {
+            delay(durationMillis)
+            if (deleteTaskStatusMessage != null && deleteTaskStatusMessage != "Удаление задачи '${showDeleteConfirmDialogForTask?.title ?: ""}'...") {
+                deleteTaskStatusMessage = null
+            }
+        }
+    }
+    // --- Конец функций для удаления задач ---
 }
 
 // UI компоненты
@@ -2689,19 +2794,22 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
         }
 
         // Список задач
-        // Сообщения о статусе операций (быстрое создание задачи, статус дня, текстовый комментарий)
+        // Сообщения о статусе операций (быстрое создание задачи, статус дня, текстовый комментарий, удаление задачи)
         val taskCreationMessage = viewModel.quickTaskCreationStatus
         val timemanMessage = viewModel.timemanInfoMessage
         val textCommentMessage = viewModel.textCommentStatusMessage
+        val deleteTaskMessage = viewModel.deleteTaskStatusMessage
 
-        val generalMessageToDisplay = textCommentMessage ?: timemanMessage ?: taskCreationMessage // Порядок приоритета: текст. коммент, день, задача
+        // Порядок приоритета: удаление, текст. коммент, день, задача
+        val generalMessageToDisplay = deleteTaskMessage ?: textCommentMessage ?: timemanMessage ?: taskCreationMessage
         if (generalMessageToDisplay != null) {
             // Определение, является ли сообщение ошибкой
             val isGeneralError = viewModel.errorMessage != null || // Если есть глобальная ошибка
                                  generalMessageToDisplay.contains("Ошибка", ignoreCase = true) ||
                                  generalMessageToDisplay.contains("Failed", ignoreCase = true) ||
                                  generalMessageToDisplay.contains("не удалось", ignoreCase = true) ||
-                                 (textCommentMessage != null && !textCommentMessage.contains("успешно", ignoreCase = true)) // Сообщение о комменте не успешное
+                                 (textCommentMessage != null && !textCommentMessage.contains("успешно", ignoreCase = true) && !textCommentMessage.startsWith("Отправка")) || // Сообщение о комменте не успешное и не "Отправка"
+                                 (deleteTaskMessage != null && !deleteTaskMessage.contains("успешно", ignoreCase = true) && !deleteTaskMessage.startsWith("Удаление")) // Сообщение об удалении не успешное и не "Удаление"
 
 
             Card(
@@ -2741,12 +2849,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                         task = task,
                         onTimerToggle = { viewModel.toggleTimer(it) },
                         onCompleteTask = { viewModel.completeTask(it) },
-                        onAddCommentClick = { viewModel.prepareForTextComment(it) }, // Новый обработчик
+                        onAddCommentClick = { viewModel.prepareForTextComment(it) },
+                        onLongPress = { viewModel.requestDeleteTask(it) }, // Обработчик долгого нажатия
                         isTimerRunningForThisTask = isTimerRunningForThisTask,
                         isTimerUserPausedForThisTask = isTimerUserPausedForThisTask,
                         isTimerSystemPausedForThisTask = isTimerSystemPausedForThisTask,
                         viewModel = viewModel,
-                        context = context // Передаем context
+                        context = context
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                 }
@@ -2878,7 +2987,8 @@ fun TaskCard(
     task: Task,
     onTimerToggle: (Task) -> Unit,
     onCompleteTask: (Task) -> Unit,
-    onAddCommentClick: (Task) -> Unit, // Для открытия диалога добавления комментария
+    onAddCommentClick: (Task) -> Unit,
+    onLongPress: (Task) -> Unit, // Для запроса на удаление задачи
     isTimerRunningForThisTask: Boolean,
     isTimerUserPausedForThisTask: Boolean,
     isTimerSystemPausedForThisTask: Boolean,
@@ -2912,6 +3022,20 @@ fun TaskCard(
     }
     val scheme = MaterialTheme.colorScheme // Считываем схему один раз
 
+    // Для combinedClickable
+    @OptIn(ExperimentalFoundationApi::class)
+    val cardModifier = Modifier
+        .fillMaxWidth()
+        .combinedClickable(
+            onClick = {
+                if (hasDescription) { // Клик для раскрытия, только если есть описание
+                    viewModel.toggleTaskExpansion(task.id)
+                }
+            },
+            onLongClick = { onLongPress(task) } // Долгое нажатие для удаления
+        )
+
+
     val cardContainerColor = remember(
         task.isCompleted,
         isTimerRunningForThisTask,
@@ -2932,10 +3056,8 @@ fun TaskCard(
     }
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (hasDescription) Modifier.clickable { viewModel.toggleTaskExpansion(task.id) } else Modifier), // Кликабельно, только если есть описание
-        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp), // Увеличиваем тень для TaskCard
+        modifier = cardModifier, // Используем новый модификатор с combinedClickable
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = cardContainerColor)
     ) {
         Column(
@@ -3333,6 +3455,32 @@ fun AddTextCommentDialog(
                 enabled = currentComment.isNotBlank() // Кнопка активна, только если комментарий не пуст
             ) {
                 Text("Отправить")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Отмена")
+            }
+        }
+    )
+}
+
+@Composable
+fun DeleteConfirmationDialog(
+    taskTitle: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Удалить задачу?") },
+        text = { Text("Вы уверены, что хотите удалить задачу \"$taskTitle\"? Это действие нельзя будет отменить.") },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("Удалить")
             }
         },
         dismissButton = {
