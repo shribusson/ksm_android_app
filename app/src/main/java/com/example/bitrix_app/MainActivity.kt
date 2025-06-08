@@ -2213,10 +2213,9 @@ class MainViewModel : ViewModel() {
         deleteTaskStatusMessage = "Удаление задачи '${taskToDelete.title}'..."
         Timber.i("Confirming deletion for task ${taskToDelete.id} by user ${user.name}")
 
-        val url = "${user.webhookUrl}tasks.task.delete"
-        val formBody = FormBody.Builder()
-            .add("taskId", taskToDelete.id)
-            .build()
+        // Передаем taskId как query-параметр в URL, согласно документации и примеру JS
+        val url = "${user.webhookUrl}tasks.task.delete?taskId=${taskToDelete.id}"
+        val formBody = FormBody.Builder().build() // Пустое тело для POST запроса
 
         val request = Request.Builder().url(url).post(formBody).build()
 
