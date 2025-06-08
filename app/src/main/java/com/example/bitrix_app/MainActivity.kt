@@ -2127,7 +2127,7 @@ class MainViewModel : ViewModel() {
                         errorMessage = "Не удалось инициировать отправку логов: неверный контекст."
                     }
 
-                    Timber.i("Share logs intent created for URI: $logUri")
+                    // Timber.i("Share logs intent created for URI: $logUri") // Закомментировано, т.к. Timber уже есть выше
                 } else {
                     Timber.w("Log file not found for sharing.")
                     errorMessage = "Файл логов не найден."
@@ -2878,6 +2878,16 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
             // .align(Alignment.TopCenter) // Removed to see if it resolves the alignment error.
                                         // The Box will default to TopStart within its parent Box.
         )
+
+        // Диалог подтверждения удаления задачи
+        viewModel.showDeleteConfirmDialogForTask?.let { taskToDelete ->
+            DeleteConfirmationDialog(
+                taskTitle = taskToDelete.title,
+                onConfirm = { viewModel.confirmDeleteTask() },
+                onDismiss = { viewModel.dismissDeleteTaskDialog() }
+            )
+        }
+
     } // End of Box wrapper for LazyColumn and gradient
 } // End of MainScreen's primary Column
 // } // End of MainScreen composable - Эта скобка была лишней
