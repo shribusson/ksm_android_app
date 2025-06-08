@@ -2264,12 +2264,69 @@ class MainViewModel : ViewModel() {
                                 }
                             }
                         } catch (e: JSONException) {
-                            Timber.e(e, "Error parsing delete task response for ${taskToDelete.id}. Response: $responseBody")
-                            deleteTaskStatusMessage = "Ошибка обработки ответа сервера при удалении."
+                            Timber.e(e, "Error parsing delete task response (successful HTTP) for ${taskToDelete.id}. Response: $responseBody")
+                            deleteTaskStatusMessage = "Ошибка обработки ответа (удаление): ${e.message}"
                         }
-                    } else {
-                        Timber.w("Failed to delete task ${taskToDelete.id}. Code: ${response.code}. Response: $responseBody")
-                        deleteTaskStatusMessage = "Ошибка сервера при удалении: ${response.code}"
+                    } else { // HTTP error (e.g., 400, 401, 403, 500)
+                        Timber.w("Failed to delete task ${taskToDelete.id}. HTTP Code: ${response.code}. Response: $responseBody")
+                        var displayErrorMessage = "Ошибка ${response.code} (удаление задачи)"
+                        var jsonParsedSuccessfully = false
+                        val currentUserForErrorMessage = user.name // Сохраняем имя пользователя для сообщения
+
+                        if (responseBody != null) {
+                            try {
+                                val errorJson = JSONObject(responseBody)
+                                jsonParsedSuccessfully = true
+
+                                val errorVal = errorJson.optString("error")
+                                val errorDescVal = errorJson.optString("error_description")
+
+                                val extractedMessages = mutableListOf<String>()
+                                if (errorVal.isNotBlank() && errorVal.lowercase() != "null") {
+                                    extractedMessages.add(errorVal)
+                                }
+                                if (errorDescVal.isNotBlank() && errorDescVal.lowercase() != "null") {
+                                    if (extractedMessages.isEmpty() || extractedMessages.last() != errorDescVal) {
+                                        extractedMessages.add(errorDescVal)
+                                    }
+                                }
+
+                                if (extractedMessages.isNotEmpty()) {
+                                    val combinedErrorText = extractedMessages.joinToString(" - ")
+                                    if (combinedErrorText.contains("Нет доступа", ignoreCase = true) ||
+                                        combinedErrorText.contains("permission", ignoreCase = true) || // English check
+                                        errorVal.contains("PERMISSIONS", ignoreCase = true) || // Check error type from API
+                                        response.code == 403) { // HTTP 403 is explicitly Forbidden
+                                        displayErrorMessage = "Нет прав (Ошибка ${response.code}): $combinedErrorText. Убедитесь, что пользователь '${currentUserForErrorMessage}' может удалять эту задачу."
+                                    } else {
+                                        displayErrorMessage += ": $combinedErrorText"
+                                    }
+                                } else {
+                                    // JSON was valid, but no 'error' or 'error_description' fields found or they were empty/"null".
+                                    jsonParsedSuccessfully = false // Treat as if JSON didn't give useful info.
+                                }
+                            } catch (e: JSONException) {
+                                Timber.w(e, "Could not parse JSON from error response body for tasks.task.delete. Body: $responseBody")
+                                // jsonParsedSuccessfully remains false
+                            }
+
+                            if (!jsonParsedSuccessfully && responseBody.isNotBlank()) {
+                                // Append raw response body if JSON parsing failed or yielded no specific error messages,
+                                // and the body is short and not HTML.
+                                if (responseBody.length < 150 && !responseBody.trimStart().startsWith("<")) {
+                                    val cleanedBody = responseBody.replace("\n", " ").replace("\r", "").trim()
+                                    displayErrorMessage += ". Ответ: $cleanedBody"
+                                }
+                            }
+                        }
+                        // Ensure 403 is specifically handled if not caught by JSON logic above
+                        if (response.code == 403 && !displayErrorMessage.startsWith("Нет прав")) {
+                             displayErrorMessage = "Нет прав (Ошибка 403). Убедитесь, что пользователь '${currentUserForErrorMessage}' может удалять эту задачу."
+                             if (responseBody != null && responseBody.length < 150 && responseBody.isNotBlank() && !jsonParsedSuccessfully && !responseBody.trimStart().startsWith("<")) {
+                                 displayErrorMessage += " Ответ: ${responseBody.replace("\n", " ").trim()}"
+                             }
+                        }
+                        deleteTaskStatusMessage = displayErrorMessage
                     }
                     delayAndClearDeleteTaskStatus()
                     response.close()
