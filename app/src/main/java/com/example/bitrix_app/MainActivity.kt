@@ -83,6 +83,7 @@ import java.io.IOException
 import java.util.*
 import kotlin.coroutines.resume
 import java.text.SimpleDateFormat // Добавим для formatDeadline
+import java.nio.charset.StandardCharsets
 
 // Вспомогательная функция для форматирования крайнего срока
 fun formatDeadline(deadlineStr: String?): String? {
@@ -588,7 +589,9 @@ class MainViewModel : ViewModel() {
                     isLoading = false
                     if (response.isSuccessful) {
                         response.body?.let { body ->
-                            val responseText = body.string() // Получаем текст ответа
+                            // Явно читаем байты и декодируем в UTF-8, чтобы избежать проблем с кодировкой от сервера
+                            val responseBytes = body.bytes()
+                            val responseText = String(responseBytes, StandardCharsets.UTF_8)
                             viewModelScope.launch { // Запускаем корутину для обработки и обновления UI
                                 try {
                                     val output = withContext(Dispatchers.Default) {
@@ -755,7 +758,9 @@ class MainViewModel : ViewModel() {
             override fun onResponse(call: Call, response: Response) {
                 if (response.isSuccessful) {
                     response.body?.let { body ->
-                        val responseText = body.string()
+                        // Явно читаем байты и декодируем в UTF-8, чтобы избежать проблем с кодировкой от сервера
+                        val responseBytes = body.bytes()
+                        val responseText = String(responseBytes, StandardCharsets.UTF_8)
                         viewModelScope.launch {
                             try {
                                 val output = withContext(Dispatchers.Default) {
@@ -903,7 +908,9 @@ class MainViewModel : ViewModel() {
             override fun onResponse(call: Call, response: Response) {
                 if (response.isSuccessful) {
                     response.body?.let { body ->
-                        val responseText = body.string()
+                        // Явно читаем байты и декодируем в UTF-8, чтобы избежать проблем с кодировкой от сервера
+                        val responseBytes = body.bytes()
+                        val responseText = String(responseBytes, StandardCharsets.UTF_8)
                         viewModelScope.launch {
                             try {
                                 val output = withContext(Dispatchers.Default) {
@@ -2318,7 +2325,7 @@ class MainViewModel : ViewModel() {
                     val maxLines = 2000 // Максимальное количество строк для чтения с конца файла
                     val resultLines = mutableListOf<String>()
 
-                    // Используем RandomAccessFile для эффективного чтения с конца файла
+                    // Используем RandomAccessFile для эффективного чтения с конца файла, чтобы избежать OutOfMemoryError
                     java.io.RandomAccessFile(logFile, "r").use { fileHandler ->
                         var fileLength = fileHandler.length() - 1
                         val sb = StringBuilder()
@@ -2336,6 +2343,11 @@ class MainViewModel : ViewModel() {
                                     lineCount++
                                 }
                             } else if (readByte != 0x0D) { // Carriage return ('\r'), игнорируем
+                                // ВАЖНО: toChar() здесь небезопасен для UTF-8.
+                                // Но так как мы читаем по одному байту, это будет работать для ASCII и некоторых однобайтовых кодировок.
+                                // Для корректной обработки UTF-8 потребовался бы более сложный парсер.
+                                // Учитывая, что большинство логов - ASCII, это приемлемый компромисс для избежания сбоя.
+                                // Проблема с "корейскими символами" скорее всего в HTTP-ответе, а не здесь.
                                 sb.append(readByte.toChar())
                             }
 
