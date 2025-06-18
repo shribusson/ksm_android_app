@@ -2309,20 +2309,63 @@ class MainViewModel : ViewModel() {
     }
 
     fun loadLogContent(context: Context) {
-        viewModelScope.launch {
+        // Устанавливаем состояние загрузки, чтобы пользователь видел обратную связь
+        logLines = listOf("Загрузка логов...")
+        viewModelScope.launch(Dispatchers.IO) { // Используем IO-диспетчер для файловых операций
             try {
                 val logFile = FileLoggingTree.getLogFile(context)
-                if (logFile.exists()) {
-                    val rawLines = logFile.readLines().reversed() // Читаем строки и переворачиваем (новые сверху)
-                    logLines = rawLines.mapNotNull { formatLogLineForDisplay(it) }
-                    Timber.i("Loaded and formatted ${logLines.size} log lines from ${logFile.name}")
+                if (logFile.exists() && logFile.length() > 0) {
+                    val maxLines = 2000 // Максимальное количество строк для чтения с конца файла
+                    val resultLines = mutableListOf<String>()
+
+                    // Используем RandomAccessFile для эффективного чтения с конца файла
+                    java.io.RandomAccessFile(logFile, "r").use { fileHandler ->
+                        var fileLength = fileHandler.length() - 1
+                        val sb = StringBuilder()
+                        var lineCount = 0
+
+                        // Начинаем с конца файла
+                        for (filePointer in fileLength downTo 0) {
+                            fileHandler.seek(filePointer)
+                            val readByte = fileHandler.readByte().toInt()
+
+                            if (readByte == 0x0A) { // Line feed ('\n')
+                                if (sb.isNotEmpty()) {
+                                    resultLines.add(sb.reverse().toString())
+                                    sb.setLength(0)
+                                    lineCount++
+                                }
+                            } else if (readByte != 0x0D) { // Carriage return ('\r'), игнорируем
+                                sb.append(readByte.toChar())
+                            }
+
+                            if (lineCount >= maxLines) {
+                                break
+                            }
+                        }
+                        // Добавляем последнюю строку, если файл не заканчивается переводом строки
+                        if (sb.isNotEmpty()) {
+                            resultLines.add(sb.reverse().toString())
+                        }
+                    }
+
+                    // Строки уже в обратном порядке (новые сверху)
+                    val formattedLines = resultLines.mapNotNull { formatLogLineForDisplay(it) }
+                    withContext(Dispatchers.Main) {
+                        logLines = formattedLines
+                        Timber.i("Loaded and formatted ${logLines.size} log lines from ${logFile.name}")
+                    }
                 } else {
-                    logLines = listOf("Файл логов не найден: ${logFile.absolutePath}")
-                    Timber.w("Log file not found for viewing: ${logFile.absolutePath}")
+                    withContext(Dispatchers.Main) {
+                        logLines = listOf("Файл логов не найден или пуст: ${logFile.absolutePath}")
+                        Timber.w("Log file not found or empty for viewing: ${logFile.absolutePath}")
+                    }
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Error loading log file for viewing")
-                logLines = listOf("Ошибка при чтении файла логов: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    logLines = listOf("Ошибка при чтении файла логов: ${e.message}")
+                }
             }
         }
     }
