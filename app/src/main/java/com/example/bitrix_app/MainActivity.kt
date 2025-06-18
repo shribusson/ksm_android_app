@@ -388,9 +388,9 @@ class MainViewModel : ViewModel() {
             Timber.w("No users in SharedPreferences or parsing failed. Loading default users.")
             // Return default users if nothing is loaded
             return listOf(
-                User("Денис Мелков", "https://bitrix.tooksm.kz/rest/320/gwx0v32nqbiwu7ww/", "320", "ДМ", supervisorId = "253"),
-                User("Владислав Малай", "https://bitrix.tooksm.kz/rest/321/smczp19q348xui28/", "321", "ВМ", supervisorId = "253"),
-                User("Ким Филби", "https://bitrix.tooksm.kz/rest/253/tk5y2f3sukqxn5bi/", "253", "КФ", supervisorId = null)
+                User("Денис Мелков", "https://bitrix.tooksm.kz/rest/320/r8n6popybs2d7fmt/", "320", "ДМ", supervisorId = "253"),
+                User("Владислав Малай", "https://bitrix.tooksm.kz/rest/321/cyoaxf04bwt9sbqg/", "321", "ВМ", supervisorId = "253"),
+                User("Ким Филби", "https://bitrix.tooksm.kz/rest/253/gh1cy18ml0zn065x/", "253", "КФ", supervisorId = null)
             )
         }
         return loadedUsers
