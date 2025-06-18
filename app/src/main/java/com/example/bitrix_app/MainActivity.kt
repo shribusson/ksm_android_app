@@ -200,13 +200,9 @@ enum class TimemanApiStatus { OPENED, PAUSED, CLOSED, UNKNOWN }
 class MainViewModel : ViewModel() {
     private val client = OkHttpClient()
 
-    // Пользователи с их ID в системе и аватарами
-    val users = listOf(
-        User("Денис Мелков", "https://bitrix.tooksm.kz/rest/320/gwx0v32nqbiwu7ww/", "320", "ДМ", supervisorId = "253"), // Ким Филби - руководитель
-        User("Владислав Малай", "https://bitrix.tooksm.kz/rest/321/smczp19q348xui28/", "321", "ВМ", supervisorId = "253"), // Ким Филби - руководитель
-        User("Ким Филби", "https://bitrix.tooksm.kz/rest/253/tk5y2f3sukqxn5bi/", "253", "КФ", supervisorId = null) // У Кима нет руководителя в данном контексте
-        // User("Тестовый Пользователь", "https://your_bitrix_domain/rest/user_id/webhook_code/", "user_id", "ТП", supervisorId = "ID_РУКОВОДИТЕЛЯ")
-    )
+    // Пользователи теперь управляются через MutableState и SharedPreferences
+    var users by mutableStateOf<List<User>>(emptyList())
+        private set
 
     var currentUserIndex by mutableStateOf(0)
     var tasks by mutableStateOf<List<Task>>(emptyList())
@@ -295,11 +291,23 @@ class MainViewModel : ViewModel() {
     var deleteTaskStatusMessage by mutableStateOf<String?>(null)
         private set
 
+    // --- Состояния для управления пользователями ---
+    var showAddUserDialog by mutableStateOf(false)
+        private set
+    var showRemoveUserDialogFor by mutableStateOf<User?>(null)
+        private set
+    var newUserName by mutableStateOf("")
+    var newUserWebhookUrl by mutableStateOf("")
+    var newUserId by mutableStateOf("")
+    var newUserAvatar by mutableStateOf("")
+    var newUserSupervisorId by mutableStateOf("")
+
 
     // --- Управление SharedPreferences ---
     private val sharedPreferencesName = "BitrixAppPrefs"
     private val currentUserIndexKey = "currentUserIndex"
     private val quickTaskDisplayModeKey = "quickTaskDisplayMode"
+    private val usersListKey = "usersListKey" // Ключ для сохранения списка пользователей
 
     private fun saveCurrentUserIndex(context: Context, index: Int) {
         val prefs = context.getSharedPreferences(sharedPreferencesName, Context.MODE_PRIVATE)
@@ -311,7 +319,7 @@ class MainViewModel : ViewModel() {
         val prefs = context.getSharedPreferences(sharedPreferencesName, Context.MODE_PRIVATE)
         val loadedIndex = prefs.getInt(currentUserIndexKey, 0)
         Timber.d("Loaded currentUserIndex: $loadedIndex")
-        return if (loadedIndex >= 0 && loadedIndex < users.size) loadedIndex else 0
+        return if (users.isNotEmpty() && loadedIndex >= 0 && loadedIndex < users.size) loadedIndex else 0
     }
 
     private fun saveQuickTaskDisplayMode(context: Context, mode: QuickTaskDisplayMode) {
@@ -332,7 +340,133 @@ class MainViewModel : ViewModel() {
             Timber.d("Loaded QuickTaskDisplayMode: $it")
         }
     }
+
+    private fun saveUsers(context: Context, usersToSave: List<User>) {
+        val prefs = context.getSharedPreferences(sharedPreferencesName, Context.MODE_PRIVATE)
+        val jsonArray = JSONArray()
+        usersToSave.forEach { user ->
+            val userJson = JSONObject()
+            userJson.put("name", user.name)
+            userJson.put("webhookUrl", user.webhookUrl)
+            userJson.put("userId", user.userId)
+            userJson.put("avatar", user.avatar)
+            userJson.put("supervisorId", user.supervisorId ?: JSONObject.NULL)
+            jsonArray.put(userJson)
+        }
+        prefs.edit().putString(usersListKey, jsonArray.toString()).apply()
+        Timber.d("Saved ${usersToSave.size} users to SharedPreferences.")
+    }
+
+    private fun loadUsers(context: Context): List<User> {
+        val prefs = context.getSharedPreferences(sharedPreferencesName, Context.MODE_PRIVATE)
+        val jsonString = prefs.getString(usersListKey, null)
+        val loadedUsers = mutableListOf<User>()
+
+        if (jsonString != null) {
+            try {
+                val jsonArray = JSONArray(jsonString)
+                for (i in 0 until jsonArray.length()) {
+                    val userJson = jsonArray.getJSONObject(i)
+                    loadedUsers.add(
+                        User(
+                            name = userJson.getString("name"),
+                            webhookUrl = userJson.getString("webhookUrl"),
+                            userId = userJson.getString("userId"),
+                            avatar = userJson.getString("avatar"),
+                            supervisorId = if (userJson.isNull("supervisorId")) null else userJson.getString("supervisorId")
+                        )
+                    )
+                }
+                Timber.d("Loaded ${loadedUsers.size} users from SharedPreferences.")
+            } catch (e: JSONException) {
+                Timber.e(e, "Failed to parse users from SharedPreferences.")
+                // Fallback to default if parsing fails
+            }
+        }
+
+        if (loadedUsers.isEmpty()) {
+            Timber.w("No users in SharedPreferences or parsing failed. Loading default users.")
+            // Return default users if nothing is loaded
+            return listOf(
+                User("Денис Мелков", "https://bitrix.tooksm.kz/rest/320/gwx0v32nqbiwu7ww/", "320", "ДМ", supervisorId = "253"),
+                User("Владислав Малай", "https://bitrix.tooksm.kz/rest/321/smczp19q348xui28/", "321", "ВМ", supervisorId = "253"),
+                User("Ким Филби", "https://bitrix.tooksm.kz/rest/253/tk5y2f3sukqxn5bi/", "253", "КФ", supervisorId = null)
+            )
+        }
+        return loadedUsers
+    }
     // --- Конец SharedPreferences ---
+
+    // --- Управление пользователями ---
+    fun prepareAddUserDialog() {
+        newUserName = ""
+        newUserWebhookUrl = ""
+        newUserId = ""
+        newUserAvatar = ""
+        newUserSupervisorId = ""
+        showAddUserDialog = true
+    }
+
+    fun dismissAddUserDialog() {
+        showAddUserDialog = false
+    }
+
+    fun addUser(context: Context) {
+        if (newUserName.isBlank() || newUserWebhookUrl.isBlank() || newUserId.isBlank() || newUserAvatar.isBlank()) {
+            errorMessage = "Все поля, кроме ID руководителя, должны быть заполнены."
+            return
+        }
+        val newUser = User(
+            name = newUserName.trim(),
+            webhookUrl = newUserWebhookUrl.trim(),
+            userId = newUserId.trim(),
+            avatar = newUserAvatar.trim(),
+            supervisorId = newUserSupervisorId.trim().takeIf { it.isNotBlank() }
+        )
+        val updatedUsers = users + newUser
+        users = updatedUsers
+        saveUsers(context, updatedUsers)
+        dismissAddUserDialog()
+        Timber.i("Added new user: ${newUser.name}")
+    }
+
+    fun requestRemoveUser(user: User) {
+        if (users.size <= 1) {
+            errorMessage = "Нельзя удалить последнего пользователя."
+            viewModelScope.launch {
+                delay(3000)
+                errorMessage = null
+            }
+            return
+        }
+        showRemoveUserDialogFor = user
+    }
+
+    fun dismissRemoveUserDialog() {
+        showRemoveUserDialogFor = null
+    }
+
+    fun confirmRemoveUser(context: Context) {
+        val userToRemove = showRemoveUserDialogFor ?: return
+        val userIndexToRemove = users.indexOf(userToRemove)
+
+        val updatedUsers = users.toMutableList().apply {
+            remove(userToRemove)
+        }.toList()
+
+        users = updatedUsers
+        saveUsers(context, updatedUsers)
+        Timber.i("Removed user: ${userToRemove.name}")
+
+        dismissRemoveUserDialog()
+
+        if (currentUserIndex == userIndexToRemove) {
+            switchUser(0, context)
+        } else if (currentUserIndex > userIndexToRemove) {
+            switchUser(currentUserIndex - 1, context)
+        }
+    }
+    // --- Конец управления пользователями ---
 
     fun connectToTimerService(service: TimerService?) {
         timerService = service
@@ -345,8 +479,10 @@ class MainViewModel : ViewModel() {
                 }
             }
             // Сообщаем сервису текущего пользователя
-            val currentUser = users[currentUserIndex]
-            service.setCurrentUser(currentUser.userId, currentUser.name)
+            if (users.isNotEmpty()) {
+                val currentUser = users[currentUserIndex]
+                service.setCurrentUser(currentUser.userId, currentUser.name)
+            }
         }
     }
 
@@ -365,23 +501,30 @@ class MainViewModel : ViewModel() {
     fun initViewModel(context: Context) {
         if (isInitialized) return
         Timber.d("MainViewModel initializing with context...")
+        users = loadUsers(context)
         currentUserIndex = loadCurrentUserIndex(context) // Загружаем сохраненный индекс
         quickTaskDisplayMode = loadQuickTaskDisplayMode(context) // Загружаем режим отображения быстрых задач
-        updateWorkStatus() // Важно вызвать до loadTasks, чтобы timeman статус был актуален
-        loadTasks()
+        if (users.isNotEmpty()) {
+            updateWorkStatus() // Важно вызвать до loadTasks, чтобы timeman статус был актуален
+            loadTasks()
+            val currentUserForInit = users[currentUserIndex]
+            fetchTimemanStatus(currentUserForInit) // Получаем статус рабочего дня при инициализации
+            timerService?.setCurrentUser(currentUserForInit.userId, currentUserForInit.name) // Уведомляем сервис, если он уже подключен
+        }
         startPeriodicUpdates()
         startPeriodicTaskUpdates()
-        val currentUserForInit = users[currentUserIndex]
-        fetchTimemanStatus(currentUserForInit) // Получаем статус рабочего дня при инициализации
-        timerService?.setCurrentUser(currentUserForInit.userId, currentUserForInit.name) // Уведомляем сервис, если он уже подключен
         isInitialized = true
-        Timber.d("MainViewModel initialized. Current user: ${users[currentUserIndex].name}")
+        Timber.d("MainViewModel initialized. Current user: ${users.getOrNull(currentUserIndex)?.name}")
     }
     private var isInitialized = false
 
     // Функции getCurrentUserTheme и selectTheme удалены
 
     fun switchUser(index: Int, context: Context) {
+        if (index < 0 || index >= users.size) {
+            Timber.e("Attempted to switch to invalid user index: $index. Users count: ${users.size}")
+            return
+        }
         Timber.i("Switching user to index $index: ${users.getOrNull(index)?.name ?: "Unknown"}")
         isLoading = true // Показываем загрузку немедленно
         tasks = emptyList() // Очищаем задачи предыдущего пользователя
@@ -399,6 +542,12 @@ class MainViewModel : ViewModel() {
     }
 
     fun loadTasks() {
+        if (users.isEmpty()) {
+            isLoading = false
+            errorMessage = "Нет пользователей для загрузки задач."
+            tasks = emptyList()
+            return
+        }
         Timber.d("loadTasks called for user: ${users[currentUserIndex].name}")
         isLoading = true
         errorMessage = null
@@ -585,6 +734,7 @@ class MainViewModel : ViewModel() {
 
     // Простой метод загрузки без фильтров
     private fun loadTasksSimple() {
+        if (users.isEmpty()) return
         val user = users[currentUserIndex]
         // Возвращаем UF_TASK_WEBDAV_FILES и добавляем UF_*, DEADLINE в простой запрос
         val url = "${user.webhookUrl}tasks.task.list?select[]=ID&select[]=TITLE&select[]=DESCRIPTION&select[]=TIME_SPENT_IN_LOGS&select[]=TIME_ESTIMATE&select[]=STATUS&select[]=DEADLINE&select[]=CHANGED_DATE&select[]=UF_TASK_WEBDAV_FILES&select[]=UF_*"
@@ -731,6 +881,7 @@ class MainViewModel : ViewModel() {
 
     // Альтернативный метод загрузки без фильтров
     private fun loadTasksAlternative() {
+        if (users.isEmpty()) return
         val user = users[currentUserIndex]
         val url = "${user.webhookUrl}tasks.task.list" +
                 "?order[ID]=desc" + // Оставляем сортировку по ID для альтернативного варианта
@@ -1018,6 +1169,7 @@ class MainViewModel : ViewModel() {
 
 
     fun fetchChecklistForTask(taskId: String) {
+        if (users.isEmpty()) return
         val user = users[currentUserIndex] // Используем текущего пользователя для API вызова
         loadingChecklistMap = loadingChecklistMap + (taskId to true)
         val url = "${user.webhookUrl}task.checklistitem.getlist?taskId=$taskId"
@@ -1072,7 +1224,7 @@ class MainViewModel : ViewModel() {
     // fetchSubtasksForTask удален
 
     fun fetchFileDetailsForTaskIfNeeded(task: Task) {
-        if (task.attachedFileIds.isEmpty()) {
+        if (task.attachedFileIds.isEmpty() || users.isEmpty()) {
             return
         }
 
@@ -1141,6 +1293,7 @@ class MainViewModel : ViewModel() {
     }
 
     fun toggleChecklistItemStatus(taskId: String, checklistItemId: String, currentIsComplete: Boolean) {
+        if (users.isEmpty()) return
         val user = users[currentUserIndex]
         val action = if (currentIsComplete) "task.checklistitem.renew" else "task.checklistitem.complete"
         val url = "${user.webhookUrl}$action"
@@ -1195,6 +1348,7 @@ class MainViewModel : ViewModel() {
 
 
     fun toggleTimer(task: Task) {
+        if (users.isEmpty()) return
         val service = timerService ?: return // Если сервис не подключен, ничего не делаем
         val currentServiceState = timerServiceState // Берем актуальное состояние из сервиса
         val user = users[currentUserIndex]
@@ -1252,6 +1406,7 @@ class MainViewModel : ViewModel() {
 
     // Отправка комментария о состоянии таймера
     private fun sendTimerComment(task: Task, action: String, currentSeconds: Int) {
+        if (users.isEmpty()) return
         val user = users[currentUserIndex]
         Timber.d("Sending timer comment for task ${task.id}, action: '$action', user: ${user.name}, time: ${formatTime(currentSeconds)}")
         val url = "${user.webhookUrl}task.commentitem.add"
@@ -1290,6 +1445,7 @@ class MainViewModel : ViewModel() {
 
     // Сохранение времени в Битрикс при остановке таймера (вызывается ViewModel)
     private fun stopTimerAndSaveTime(task: Task, secondsToSave: Int) {
+        if (users.isEmpty()) return
         val user = users[currentUserIndex]
         Timber.i("stopTimerAndSaveTime (ViewModel) called for task ${task.id}, user ${user.name}, seconds: $secondsToSave")
 
@@ -1350,6 +1506,7 @@ class MainViewModel : ViewModel() {
 
     // Упрощенный способ сохранения времени без USER_ID
     private fun saveTimeSimplified(task: Task, secondsToSave: Int) {
+        if (users.isEmpty()) return
         val user = users[currentUserIndex]
         Timber.i("saveTimeSimplified called for task ${task.id}, user ${user.name}, seconds: $secondsToSave")
         val url = "${user.webhookUrl}task.elapseditem.add"
@@ -1411,6 +1568,7 @@ class MainViewModel : ViewModel() {
     }
 
     fun completeTask(task: Task) {
+        if (users.isEmpty()) return
         val service = timerService ?: return
         val currentServiceState = timerServiceState
         val user = users[currentUserIndex]
@@ -1443,6 +1601,7 @@ class MainViewModel : ViewModel() {
     }
 
     private fun completeTaskInBitrixInternal(task: Task) {
+        if (users.isEmpty()) return
         val user = users[currentUserIndex]
         Timber.i("Sending completeTaskInBitrix for task ${task.id}, user ${user.name}")
         val url = "${user.webhookUrl}tasks.task.complete"
@@ -1574,6 +1733,10 @@ class MainViewModel : ViewModel() {
     }
 
     fun fetchTimemanStatus(user: User = users[currentUserIndex], showLoadingIndicator: Boolean = true, onComplete: ((TimemanApiStatus) -> Unit)? = null) {
+        if (users.isEmpty()) {
+            onComplete?.invoke(TimemanApiStatus.UNKNOWN)
+            return
+        }
         if (showLoadingIndicator) timemanStatusLoading = true
         // timemanInfoMessage = null // Не очищаем здесь, чтобы не сбрасывать сообщения от open/close
         val url = "${user.webhookUrl}timeman.status"
@@ -1638,6 +1801,7 @@ class MainViewModel : ViewModel() {
     }
 
     fun manualToggleWorkdayStatus() {
+        if (users.isEmpty()) return
         val user = users[currentUserIndex]
         timemanActionInProgress = true // Блокируем кнопку
         timemanInfoMessage = null      // Очищаем предыдущие сообщения
@@ -1876,7 +2040,9 @@ class MainViewModel : ViewModel() {
                 // Состояние таймера теперь управляется TimerService.
                 // loadTasks() уже содержит логику для остановки таймера в сервисе,
                 // если активная задача больше не существует в загруженном списке.
-                loadTasks()
+                if (users.isNotEmpty()) {
+                    loadTasks()
+                }
             }
         }
     }
@@ -1885,6 +2051,7 @@ class MainViewModel : ViewModel() {
     // private fun updateCurrentTime() // Удалено
 
     fun createStandardTask(taskType: StandardTaskType, context: Context) {
+        if (users.isEmpty()) return
         viewModelScope.launch {
             // Используем quickTaskCreationStatus для индикации загрузки этого конкретного действия
             quickTaskCreationStatus = "Создание задачи '${taskType.titlePrefix}'..."
@@ -1963,6 +2130,7 @@ class MainViewModel : ViewModel() {
     }
 
     fun stopAndSaveCurrentTimer() {
+        if (users.isEmpty()) return
         val service = timerService ?: return
         val currentServiceState = timerServiceState ?: return
         val activeTaskId = currentServiceState.activeTaskId ?: return
@@ -1994,7 +2162,7 @@ class MainViewModel : ViewModel() {
         // Состояние timerServiceState обновится автоматически, и карточка активного таймера исчезнет.
     }
 
-    fun getCurrentUser() = users[currentUserIndex]
+    fun getCurrentUser() = if (users.isNotEmpty()) users[currentUserIndex] else null
 
     // --- Функции для текстовых комментариев ---
     fun prepareForTextComment(task: Task) {
@@ -2010,6 +2178,7 @@ class MainViewModel : ViewModel() {
     }
 
     fun submitTextComment(taskId: String, commentText: String) {
+        if (users.isEmpty()) return
         dismissAddCommentDialog() // Скрываем диалог
         val user = users[currentUserIndex]
         textCommentStatusMessage = "Отправка комментария..."
@@ -2206,6 +2375,7 @@ class MainViewModel : ViewModel() {
     }
 
     fun confirmDeleteTask() {
+        if (users.isEmpty()) return
         val taskToDelete = showDeleteConfirmDialogForTask ?: return
         dismissDeleteTaskDialog() // Скрываем диалог сразу
 
@@ -2562,7 +2732,7 @@ fun LogViewerScreen(
 }
 
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) { // Добавлен параметр onShowLogs
     var isSettingsExpanded by remember { mutableStateOf(false) }
@@ -2594,11 +2764,16 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                             .size(avatarSize.dp)
                             .shadow(elevation = elevation, shape = CircleShape, clip = false) // Тень применяется к Box
                             .clip(CircleShape) // Обрезка для UserAvatar, если он сам не обрезает
-                            .clickable {
-                                if (!isSelected) { // Переключаем пользователя только если он не выбран
-                                    viewModel.switchUser(index, context)
+                            .combinedClickable(
+                                onClick = {
+                                    if (!isSelected) { // Переключаем пользователя только если он не выбран
+                                        viewModel.switchUser(index, context)
+                                    }
+                                },
+                                onLongClick = {
+                                    viewModel.requestRemoveUser(user)
                                 }
-                            }
+                            )
                             .padding(if (isSelected) 2.dp else 0.dp) // Небольшой отступ для "рамки" у выбранного
                             .background(
                                 if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f) else Color.Transparent,
@@ -2723,6 +2898,14 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
                         },
                         onClick = {
                             viewModel.toggleQuickTaskDisplayMode(context)
+                            isSettingsExpanded = false
+                        }
+                    )
+                    Divider() // Разделитель
+                    DropdownMenuItem(
+                        text = { Text("Добавить пользователя") },
+                        onClick = {
+                            viewModel.prepareAddUserDialog()
                             isSettingsExpanded = false
                         }
                     )
@@ -2956,6 +3139,24 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), onShowLogs: () -> Unit) {
             )
         }
 
+        // Диалог добавления нового пользователя
+        if (viewModel.showAddUserDialog) {
+            AddUserDialog(
+                viewModel = viewModel,
+                onConfirm = { viewModel.addUser(context) },
+                onDismiss = { viewModel.dismissAddUserDialog() }
+            )
+        }
+
+        // Диалог подтверждения удаления пользователя
+        viewModel.showRemoveUserDialogFor?.let { userToRemove ->
+            RemoveUserConfirmationDialog(
+                user = userToRemove,
+                onConfirm = { viewModel.confirmRemoveUser(context) },
+                onDismiss = { viewModel.dismissRemoveUserDialog() }
+            )
+        }
+
     } // End of Box wrapper for LazyColumn and gradient
 } // End of MainScreen's primary Column
 // } // End of MainScreen composable - Эта скобка была лишней
@@ -3036,7 +3237,7 @@ fun WorkDayControlButton(viewModel: MainViewModel) {
 
     Button(
         onClick = { viewModel.manualToggleWorkdayStatus() },
-        enabled = !isLoading,
+        enabled = !isLoading && viewModel.users.isNotEmpty(),
         colors = buttonColors,
         modifier = Modifier.height(56.dp) // Сопоставимо с размером аватаров и иконок быстрых задач
     ) {
@@ -3553,6 +3754,108 @@ fun DeleteConfirmationDialog(
         onDismissRequest = onDismiss,
         title = { Text("Удалить задачу?") },
         text = { Text("Вы уверены, что хотите удалить задачу \"$taskTitle\"? Это действие нельзя будет отменить.") },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("Удалить")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Отмена")
+            }
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AddUserDialog(
+    viewModel: MainViewModel,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val isConfirmEnabled = viewModel.newUserName.isNotBlank() &&
+                           viewModel.newUserWebhookUrl.isNotBlank() &&
+                           viewModel.newUserId.isNotBlank() &&
+                           viewModel.newUserAvatar.isNotBlank()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Добавить нового пользователя") },
+        text = {
+            LazyColumn { // Используем LazyColumn для прокрутки, если откроется клавиатура
+                item {
+                    OutlinedTextField(
+                        value = viewModel.newUserName,
+                        onValueChange = { viewModel.newUserName = it },
+                        label = { Text("Имя пользователя") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = viewModel.newUserWebhookUrl,
+                        onValueChange = { viewModel.newUserWebhookUrl = it },
+                        label = { Text("URL вебхука") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = viewModel.newUserId,
+                        onValueChange = { viewModel.newUserId = it },
+                        label = { Text("ID пользователя") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = viewModel.newUserAvatar,
+                        onValueChange = { viewModel.newUserAvatar = it },
+                        label = { Text("Инициалы для аватара") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = viewModel.newUserSupervisorId,
+                        onValueChange = { viewModel.newUserSupervisorId = it },
+                        label = { Text("ID руководителя (необязательно)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = isConfirmEnabled
+            ) {
+                Text("Добавить")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Отмена")
+            }
+        }
+    )
+}
+
+@Composable
+fun RemoveUserConfirmationDialog(
+    user: User,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Удалить пользователя?") },
+        text = { Text("Вы уверены, что хотите удалить пользователя \"${user.name}\"? Это действие нельзя будет отменить.") },
         confirmButton = {
             Button(
                 onClick = onConfirm,
