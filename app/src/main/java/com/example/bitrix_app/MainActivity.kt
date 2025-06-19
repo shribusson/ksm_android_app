@@ -614,10 +614,6 @@ class MainViewModel : ViewModel() {
                                                 }
                                             }
 
-                                            val calendar = Calendar.getInstance()
-                                            calendar.add(Calendar.DAY_OF_YEAR, -2)
-                                            val twoDaysAgo = calendar.time
-
                                             // Более надежные парсеры дат
                                             val dateParsers = listOf(
                                                 SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()),
@@ -627,27 +623,17 @@ class MainViewModel : ViewModel() {
                                             val simpleDeadlineDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
                                             val filteredTasksList = newRawTasksList.filter { task ->
-                                                if (!task.isCompleted) true
-                                                else {
-                                                    if (showCompletedTasks) {
-                                                        task.changedDate?.let { dateStr ->
-                                                            var parsedDate: Date? = null
-                                                            for (parser in dateParsers) {
-                                                                try {
-                                                                    parsedDate = parser.parse(dateStr)
-                                                                    if (parsedDate != null) break
-                                                                } catch (e: java.text.ParseException) { /* continue */ }
-                                                            }
-
-                                                            if (parsedDate != null) {
-                                                                parsedDate.after(twoDaysAgo)
-                                                            } else {
-                                                                Timber.w("Failed to parse changedDate '$dateStr' for task ${task.id}. Filtering out.")
-                                                                false
-                                                            }
-                                                        } ?: false
-                                                    } else false
+                                                val keep = if (!task.isCompleted) {
+                                                    true // Всегда оставляем незавершенные задачи
+                                                } else {
+                                                    // Для завершенных задач, оставляем их, если включен переключатель.
+                                                    // Фильтр по дате временно убран, чтобы гарантировать отображение.
+                                                    showCompletedTasks
                                                 }
+                                                if (!keep) {
+                                                    Timber.d("Task ${task.id} ('${task.title}') with status ${task.status} was filtered out (isCompleted: ${task.isCompleted}, showCompletedTasks: $showCompletedTasks).")
+                                                }
+                                                keep
                                             }
                                             Timber.d("Raw tasks (bg): ${newRawTasksList.size}, Filtered (bg, showCompleted=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name}")
 
