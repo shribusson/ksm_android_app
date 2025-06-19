@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.PlayArrow // Для иконки �
 import androidx.compose.material.icons.filled.PowerSettingsNew // Для кнопки управления рабочим днем
 import androidx.compose.material.icons.filled.Refresh // Для кнопки "Обновить"
 import androidx.compose.material.icons.filled.Save // Для иконки сохранения (дискета)
+import androidx.compose.material.icons.filled.Share // Для кнопки "Поделиться"
 import androidx.compose.material.icons.filled.Stop // Для иконки остановки записи
 import androidx.compose.material.icons.filled.Delete // Для иконки удаления
 import androidx.compose.material3.*
@@ -233,9 +234,11 @@ class MainViewModel : ViewModel() {
     // private var mediaRecorder: MediaRecorder? = null // Удалено
     // private var audioOutputFile: java.io.File? = null // Удалено
 
-    // Состояние для отображения логов - УДАЛЕНО
-    // var logLines by mutableStateOf<List<String>>(emptyList())
-    //     private set
+    // Состояние для отображения логов
+    var isLogViewerVisible by mutableStateOf(false)
+        private set
+    var logLines by mutableStateOf<List<String>>(emptyList())
+        private set
 
     // Состояние userSelectedThemeMap удалено
 
@@ -570,6 +573,7 @@ class MainViewModel : ViewModel() {
                     if (response.isSuccessful) {
                         response.body?.let { body ->
                             val responseText = String(body.bytes(), StandardCharsets.UTF_8)
+                            Timber.i("Bitrix Response for user ${user.name}: $responseText")
                             viewModelScope.launch {
                                 try {
                                     val output = withContext(Dispatchers.Default) {
@@ -1709,8 +1713,64 @@ class MainViewModel : ViewModel() {
     }
     // --- Конец функций для текстовых комментариев ---
 
-    // Функции, связанные с файлами и логами, удалены:
-    // shareLogs, loadLogContent, formatLogLineForDisplay, exportDetailedLogs
+    // --- Функции для просмотра логов ---
+    fun showLogViewer(context: Context) {
+        loadLogContent(context)
+        isLogViewerVisible = true
+    }
+
+    fun hideLogViewer() {
+        isLogViewerVisible = false
+    }
+
+    fun loadLogContent(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val logFile = FileLoggingTree.getLogFile(context)
+                if (logFile.exists()) {
+                    val lines = logFile.readLines().reversed()
+                    withContext(Dispatchers.Main) {
+                        logLines = lines
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        logLines = listOf("Файл логов не найден.")
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to read log file.")
+                withContext(Dispatchers.Main) {
+                    logLines = listOf("Ошибка чтения файла логов: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun shareLogs(context: Context) {
+        viewModelScope.launch {
+            val logFile = FileLoggingTree.getLogFile(context)
+            if (logFile.exists()) {
+                try {
+                    val contentUri = FileProvider.getUriForFile(context, "${context.packageName}.provider", logFile)
+                    val shareIntent = Intent().apply {
+                        action = Intent.ACTION_SEND
+                        putExtra(Intent.EXTRA_STREAM, contentUri)
+                        type = "text/plain"
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    val chooser = Intent.createChooser(shareIntent, "Поделиться логами через...")
+                    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(chooser)
+                } catch (e: Exception) {
+                    Timber.e(e, "Error sharing log file")
+                    errorMessage = "Не удалось поделиться файлом логов: ${e.message}"
+                }
+            } else {
+                errorMessage = "Файл логов не найден."
+            }
+        }
+    }
+    // --- Конец функций для просмотра логов ---
 
     // --- Функции для удаления задач ---
     fun requestDeleteTask(task: Task) {
@@ -1873,10 +1933,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Инициализация Timber для логирования в LogCat
+        // Инициализация Timber для логирования в LogCat и в файл
         if (Timber.treeCount == 0) {
             Timber.plant(Timber.DebugTree())
-            Timber.i("MainActivity onCreate: Timber DebugTree planted.")
+            Timber.plant(FileLoggingTree(applicationContext))
+            Timber.i("MainActivity onCreate: Timber DebugTree and FileLoggingTree planted.")
         } else {
             Timber.i("MainActivity onCreate: Timber already planted.")
         }
@@ -1976,7 +2037,54 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// LogViewerScreen удален, так как функционал просмотра логов вырезан
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LogViewerScreen(viewModel: MainViewModel) {
+    val context = LocalContext.current
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Просмотр логов") },
+                navigationIcon = {
+                    IconButton(onClick = { viewModel.hideLogViewer() }) {
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "Назад")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { viewModel.loadLogContent(context) }) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "Обновить")
+                    }
+                    IconButton(onClick = { viewModel.shareLogs(context) }) {
+                        Icon(Icons.Filled.Share, contentDescription = "Поделиться")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    actionIconContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            )
+        }
+    ) { paddingValues ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(horizontal = 8.dp)
+        ) {
+            items(viewModel.logLines) { line ->
+                Text(
+                    text = line,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(vertical = 2.dp)
+                )
+                Divider()
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -1985,362 +2093,372 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var isQuickTaskDropdownExpanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+    if (viewModel.isLogViewerVisible) {
+        LogViewerScreen(viewModel = viewModel)
+    } else {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
         ) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                viewModel.users.forEachIndexed { index, user ->
-                    val isSelected = index == viewModel.currentUserIndex
-                    val avatarSize = if (isSelected) 56 else 48
-                    val elevation = if (isSelected) 6.dp else 2.dp
-                    Box(
-                        modifier = Modifier
-                            .size(avatarSize.dp)
-                            .shadow(elevation = elevation, shape = CircleShape, clip = false)
-                            .clip(CircleShape)
-                            .combinedClickable(
-                                onClick = {
-                                    if (!isSelected) {
-                                        viewModel.switchUser(index, context)
-                                    }
-                                },
-                                onLongClick = {
-                                    viewModel.requestRemoveUser(user)
-                                }
-                            )
-                            .padding(if (isSelected) 2.dp else 0.dp)
-                            .background(
-                                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f) else Color.Transparent,
-                                CircleShape
-                            )
-
-                    ) {
-                        UserAvatar(user = user, size = avatarSize - (if (isSelected) 4 else 0))
-                    }
-                }
-            }
-
-            WorkDayControlButton(viewModel)
-
-            if (viewModel.quickTaskDisplayMode == MainViewModel.QuickTaskDisplayMode.ICONS) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    MainViewModel.StandardTaskType.values().forEach { taskType ->
-                        IconButton(
-                            onClick = { viewModel.createStandardTask(taskType, context) },
-                            modifier = Modifier.size(56.dp)
+                    viewModel.users.forEachIndexed { index, user ->
+                        val isSelected = index == viewModel.currentUserIndex
+                        val avatarSize = if (isSelected) 56 else 48
+                        val elevation = if (isSelected) 6.dp else 2.dp
+                        Box(
+                            modifier = Modifier
+                                .size(avatarSize.dp)
+                                .shadow(elevation = elevation, shape = CircleShape, clip = false)
+                                .clip(CircleShape)
+                                .combinedClickable(
+                                    onClick = {
+                                        if (!isSelected) {
+                                            viewModel.switchUser(index, context)
+                                        }
+                                    },
+                                    onLongClick = {
+                                        viewModel.requestRemoveUser(user)
+                                    }
+                                )
+                                .padding(if (isSelected) 2.dp else 0.dp)
+                                .background(
+                                    if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f) else Color.Transparent,
+                                    CircleShape
+                                )
+
                         ) {
-                            Text(
-                                text = taskType.emoji,
-                                fontSize = 32.sp,
-                                textAlign = TextAlign.Center
-                            )
+                            UserAvatar(user = user, size = avatarSize - (if (isSelected) 4 else 0))
                         }
                     }
                 }
-            } else {
-                Box {
-                    IconButton(
-                        onClick = { isQuickTaskDropdownExpanded = true },
-                        modifier = Modifier.size(56.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Add,
-                            contentDescription = "Создать быструю задачу",
-                            modifier = Modifier.size(32.dp)
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = isQuickTaskDropdownExpanded,
-                        onDismissRequest = { isQuickTaskDropdownExpanded = false }
+
+                WorkDayControlButton(viewModel)
+
+                if (viewModel.quickTaskDisplayMode == MainViewModel.QuickTaskDisplayMode.ICONS) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         MainViewModel.StandardTaskType.values().forEach { taskType ->
-                            DropdownMenuItem(
-                                text = { Text("${taskType.emoji} ${taskType.titlePrefix}") },
-                                onClick = {
-                                    viewModel.createStandardTask(taskType, context)
-                                    isQuickTaskDropdownExpanded = false
+                            IconButton(
+                                onClick = { viewModel.createStandardTask(taskType, context) },
+                                modifier = Modifier.size(56.dp)
+                            ) {
+                                Text(
+                                    text = taskType.emoji,
+                                    fontSize = 32.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Box {
+                        IconButton(
+                            onClick = { isQuickTaskDropdownExpanded = true },
+                            modifier = Modifier.size(56.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = "Создать быструю задачу",
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = isQuickTaskDropdownExpanded,
+                            onDismissRequest = { isQuickTaskDropdownExpanded = false }
+                        ) {
+                            MainViewModel.StandardTaskType.values().forEach { taskType ->
+                                DropdownMenuItem(
+                                    text = { Text("${taskType.emoji} ${taskType.titlePrefix}") },
+                                    onClick = {
+                                        viewModel.createStandardTask(taskType, context)
+                                        isQuickTaskDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Box {
+                    WorkStatusIcon(
+                        workStatus = viewModel.workStatus,
+                        modifier = Modifier.clickable { isSettingsExpanded = true }
+                    )
+
+                    DropdownMenu(
+                        expanded = isSettingsExpanded,
+                        onDismissRequest = { isSettingsExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = if (viewModel.showCompletedTasks) "✓ " else "   ",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text("Показывать завершенные (2 дня)")
                                 }
+                            },
+                            onClick = {
+                                viewModel.toggleShowCompletedTasks()
+                                isSettingsExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = if (viewModel.quickTaskDisplayMode == MainViewModel.QuickTaskDisplayMode.DROPDOWN) "✓ " else "   ",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text("Быстрые задачи: список")
+                                }
+                            },
+                            onClick = {
+                                viewModel.toggleQuickTaskDisplayMode(context)
+                                isSettingsExpanded = false
+                            }
+                        )
+                        Divider()
+                        DropdownMenuItem(
+                            text = { Text("Посмотреть логи") },
+                            onClick = {
+                                viewModel.showLogViewer(context)
+                                isSettingsExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Добавить пользователя") },
+                            onClick = {
+                                viewModel.prepareAddUserDialog()
+                                isSettingsExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            viewModel.showAddCommentDialogForTask?.let { task ->
+                AddTextCommentDialog(
+                    taskTitle = task.title,
+                    currentComment = viewModel.commentTextInput,
+                    onCommentChange = { viewModel.commentTextInput = it },
+                    onConfirm = { comment ->
+                        viewModel.submitTextComment(task.id, comment)
+                    },
+                    onDismiss = { viewModel.dismissAddCommentDialog() }
+                )
+            }
+
+
+            val serviceState = viewModel.timerServiceState
+
+            if (serviceState?.activeTaskId != null) {
+                val taskTitle = serviceState.activeTaskTitle ?: "Задача..."
+                val cardColor = when {
+                    serviceState.isSystemPaused -> StatusOrange.copy(alpha = 0.8f)
+                    serviceState.isUserPaused -> StatusYellow.copy(alpha = 0.8f)
+                    else -> StatusBlue.copy(alpha = 0.8f)
+                }
+                val textColor = if (serviceState.isEffectivelyPaused) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
+
+                val activeTaskDetails = viewModel.tasks.find { it.id == serviceState.activeTaskId }
+                val timeEstimateFormatted = activeTaskDetails?.let {
+                    val estimateHours = it.timeEstimate / 3600
+                    val estimateMinutes = (it.timeEstimate % 3600) / 60
+                    String.format("%d:%02d", estimateHours, estimateMinutes)
+                } ?: "--:--"
+
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                    colors = CardDefaults.elevatedCardColors(containerColor = cardColor)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = taskTitle,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = textColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Text(
+                            text = "${viewModel.formatTime(serviceState.timerSeconds)} / $timeEstimateFormatted",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = textColor,
+                            maxLines = 1
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        IconButton(
+                            onClick = { viewModel.stopAndSaveCurrentTimer() },
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Save,
+                                contentDescription = "Сохранить время и остановить",
+                                tint = textColor,
+                                modifier = Modifier.size(24.dp)
                             )
                         }
                     }
                 }
+                Spacer(modifier = Modifier.height(16.dp))
             }
 
-            Box {
-                WorkStatusIcon(
-                    workStatus = viewModel.workStatus,
-                    modifier = Modifier.clickable { isSettingsExpanded = true }
-                )
-
-                DropdownMenu(
-                    expanded = isSettingsExpanded,
-                    onDismissRequest = { isSettingsExpanded = false }
+            if (viewModel.isLoading) {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
                 ) {
-                    DropdownMenuItem(
-                        text = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = if (viewModel.showCompletedTasks) "✓ " else "   ",
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text("Показывать завершенные (2 дня)")
-                            }
-                        },
-                        onClick = {
-                            viewModel.toggleShowCompletedTasks()
-                            isSettingsExpanded = false
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = if (viewModel.quickTaskDisplayMode == MainViewModel.QuickTaskDisplayMode.DROPDOWN) "✓ " else "   ",
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text("Быстрые задачи: список")
-                            }
-                        },
-                        onClick = {
-                            viewModel.toggleQuickTaskDisplayMode(context)
-                            isSettingsExpanded = false
-                        }
-                    )
-                    Divider()
-                    DropdownMenuItem(
-                        text = { Text("Добавить пользователя") },
-                        onClick = {
-                            viewModel.prepareAddUserDialog()
-                            isSettingsExpanded = false
-                        }
-                    )
-                    // Пункты меню для логов удалены
+                    CircularProgressIndicator()
                 }
             }
-        }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        viewModel.showAddCommentDialogForTask?.let { task ->
-            AddTextCommentDialog(
-                taskTitle = task.title,
-                currentComment = viewModel.commentTextInput,
-                onCommentChange = { viewModel.commentTextInput = it },
-                onConfirm = { comment ->
-                    viewModel.submitTextComment(task.id, comment)
-                },
-                onDismiss = { viewModel.dismissAddCommentDialog() }
-            )
-        }
-
-
-        val serviceState = viewModel.timerServiceState
-
-        if (serviceState?.activeTaskId != null) {
-            val taskTitle = serviceState.activeTaskTitle ?: "Задача..."
-            val cardColor = when {
-                serviceState.isSystemPaused -> StatusOrange.copy(alpha = 0.8f)
-                serviceState.isUserPaused -> StatusYellow.copy(alpha = 0.8f)
-                else -> StatusBlue.copy(alpha = 0.8f)
-            }
-            val textColor = if (serviceState.isEffectivelyPaused) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
-
-            val activeTaskDetails = viewModel.tasks.find { it.id == serviceState.activeTaskId }
-            val timeEstimateFormatted = activeTaskDetails?.let {
-                val estimateHours = it.timeEstimate / 3600
-                val estimateMinutes = (it.timeEstimate % 3600) / 60
-                String.format("%d:%02d", estimateHours, estimateMinutes)
-            } ?: "--:--"
-
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                colors = CardDefaults.elevatedCardColors(containerColor = cardColor)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+            viewModel.errorMessage?.let { error ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                 ) {
                     Text(
-                        text = taskTitle,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = textColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
+                        text = error,
+                        modifier = Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer
                     )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
 
-                    Spacer(modifier = Modifier.width(8.dp))
+            val taskCreationMessage = viewModel.quickTaskCreationStatus
+            val timemanMessage = viewModel.timemanInfoMessage
+            val textCommentMessage = viewModel.textCommentStatusMessage
+            val deleteTaskMessage = viewModel.deleteTaskStatusMessage
 
+            val generalMessageToDisplay = deleteTaskMessage ?: textCommentMessage ?: timemanMessage ?: taskCreationMessage
+            if (generalMessageToDisplay != null) {
+                val isGeneralError = viewModel.errorMessage != null ||
+                                     generalMessageToDisplay.contains("Ошибка", ignoreCase = true) ||
+                                     generalMessageToDisplay.contains("Failed", ignoreCase = true) ||
+                                     generalMessageToDisplay.contains("не удалось", ignoreCase = true) ||
+                                     (textCommentMessage != null && !textCommentMessage.contains("успешно", ignoreCase = true) && !textCommentMessage.startsWith("Отправка")) ||
+                                     (deleteTaskMessage != null && !deleteTaskMessage.contains("успешно", ignoreCase = true) && !deleteTaskMessage.startsWith("Удаление"))
+
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = if (isGeneralError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer
+                    )
+                ) {
                     Text(
-                        text = "${viewModel.formatTime(serviceState.timerSeconds)} / $timeEstimateFormatted",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = textColor,
-                        maxLines = 1
+                        text = generalMessageToDisplay,
+                        modifier = Modifier.padding(16.dp),
+                        color = if (isGeneralError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer,
+                        textAlign = TextAlign.Center
                     )
+                }
+            }
 
-                    Spacer(modifier = Modifier.width(8.dp))
 
-                    IconButton(
-                        onClick = { viewModel.stopAndSaveCurrentTimer() },
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Save,
-                            contentDescription = "Сохранить время и остановить",
-                            tint = textColor,
-                            modifier = Modifier.size(24.dp)
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(viewModel.tasks, key = { task -> task.id }) { task ->
+                        val sState = viewModel.timerServiceState
+                        val isTimerRunningForThisTask = sState?.activeTaskId == task.id && sState.isEffectivelyPaused == false
+                        val isTimerUserPausedForThisTask = sState?.activeTaskId == task.id && sState.isUserPaused == true
+                        val isTimerSystemPausedForThisTask = sState?.activeTaskId == task.id && sState.isSystemPaused == true
+
+                        TaskCard(
+                            task = task,
+                            onTimerToggle = { viewModel.toggleTimer(it) },
+                            onCompleteTask = { viewModel.completeTask(it) },
+                            onAddCommentClick = { viewModel.prepareForTextComment(it) },
+                            onLongPress = { viewModel.requestDeleteTask(it) },
+                            isTimerRunningForThisTask = isTimerRunningForThisTask,
+                            isTimerUserPausedForThisTask = isTimerUserPausedForThisTask,
+                            isTimerSystemPausedForThisTask = isTimerSystemPausedForThisTask,
+                            viewModel = viewModel,
+                            context = context
                         )
+                        Spacer(modifier = Modifier.height(10.dp))
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
 
-        if (viewModel.isLoading) {
             Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
-        }
-
-        viewModel.errorMessage?.let { error ->
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
-            ) {
-                Text(
-                    text = error,
-                    modifier = Modifier.padding(16.dp),
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        val taskCreationMessage = viewModel.quickTaskCreationStatus
-        val timemanMessage = viewModel.timemanInfoMessage
-        val textCommentMessage = viewModel.textCommentStatusMessage
-        val deleteTaskMessage = viewModel.deleteTaskStatusMessage
-
-        val generalMessageToDisplay = deleteTaskMessage ?: textCommentMessage ?: timemanMessage ?: taskCreationMessage
-        if (generalMessageToDisplay != null) {
-            val isGeneralError = viewModel.errorMessage != null ||
-                                 generalMessageToDisplay.contains("Ошибка", ignoreCase = true) ||
-                                 generalMessageToDisplay.contains("Failed", ignoreCase = true) ||
-                                 generalMessageToDisplay.contains("не удалось", ignoreCase = true) ||
-                                 (textCommentMessage != null && !textCommentMessage.contains("успешно", ignoreCase = true) && !textCommentMessage.startsWith("Отправка")) ||
-                                 (deleteTaskMessage != null && !deleteTaskMessage.contains("успешно", ignoreCase = true) && !deleteTaskMessage.startsWith("Удаление"))
-
-
-            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                colors = CardDefaults.elevatedCardColors(
-                    containerColor = if (isGeneralError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer
-                )
-            ) {
-                Text(
-                    text = generalMessageToDisplay,
-                    modifier = Modifier.padding(16.dp),
-                    color = if (isGeneralError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-
-
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                items(viewModel.tasks, key = { task -> task.id }) { task ->
-                    val sState = viewModel.timerServiceState
-                    val isTimerRunningForThisTask = sState?.activeTaskId == task.id && sState.isEffectivelyPaused == false
-                    val isTimerUserPausedForThisTask = sState?.activeTaskId == task.id && sState.isUserPaused == true
-                    val isTimerSystemPausedForThisTask = sState?.activeTaskId == task.id && sState.isSystemPaused == true
-
-                    TaskCard(
-                        task = task,
-                        onTimerToggle = { viewModel.toggleTimer(it) },
-                        onCompleteTask = { viewModel.completeTask(it) },
-                        onAddCommentClick = { viewModel.prepareForTextComment(it) },
-                        onLongPress = { viewModel.requestDeleteTask(it) },
-                        isTimerRunningForThisTask = isTimerRunningForThisTask,
-                        isTimerUserPausedForThisTask = isTimerUserPausedForThisTask,
-                        isTimerSystemPausedForThisTask = isTimerSystemPausedForThisTask,
-                        viewModel = viewModel,
-                        context = context
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                }
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(24.dp)
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.background,
-                            MaterialTheme.colorScheme.background.copy(alpha = 0.0f)
+                    .height(24.dp)
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.background,
+                                MaterialTheme.colorScheme.background.copy(alpha = 0.0f)
+                            )
                         )
                     )
+            )
+
+            viewModel.showDeleteConfirmDialogForTask?.let { taskToDelete ->
+                DeleteConfirmationDialog(
+                    taskTitle = taskToDelete.title,
+                    onConfirm = { viewModel.confirmDeleteTask() },
+                    onDismiss = { viewModel.dismissDeleteTaskDialog() }
                 )
-        )
+            }
 
-        viewModel.showDeleteConfirmDialogForTask?.let { taskToDelete ->
-            DeleteConfirmationDialog(
-                taskTitle = taskToDelete.title,
-                onConfirm = { viewModel.confirmDeleteTask() },
-                onDismiss = { viewModel.dismissDeleteTaskDialog() }
-            )
+            if (viewModel.showAddUserDialog) {
+                AddUserDialog(
+                    viewModel = viewModel,
+                    onConfirm = { viewModel.addUser(context) },
+                    onDismiss = { viewModel.dismissAddUserDialog() }
+                )
+            }
+
+            viewModel.showRemoveUserDialogFor?.let { userToRemove ->
+                RemoveUserConfirmationDialog(
+                    user = userToRemove,
+                    onConfirm = { viewModel.confirmRemoveUser(context) },
+                    onDismiss = { viewModel.dismissRemoveUserDialog() }
+                )
+            }
+
         }
-
-        if (viewModel.showAddUserDialog) {
-            AddUserDialog(
-                viewModel = viewModel,
-                onConfirm = { viewModel.addUser(context) },
-                onDismiss = { viewModel.dismissAddUserDialog() }
-            )
-        }
-
-        viewModel.showRemoveUserDialogFor?.let { userToRemove ->
-            RemoveUserConfirmationDialog(
-                user = userToRemove,
-                onConfirm = { viewModel.confirmRemoveUser(context) },
-                onDismiss = { viewModel.dismissRemoveUserDialog() }
-            )
-        }
-
     }
 }
 
