@@ -455,6 +455,18 @@ class MainViewModel : ViewModel() {
     }
     // --- Конец управления пользователями ---
 
+    fun forceReloadTasks() {
+        if (users.isEmpty()) return
+        Timber.i("Force reloading tasks for user: ${users.getOrNull(currentUserIndex)?.name}")
+        // Clear local "cache"
+        tasks = emptyList()
+        expandedTaskIds = emptySet()
+        checklistsMap = emptyMap()
+        errorMessage = null
+        // Trigger reload
+        loadTasks()
+    }
+
     fun connectToTimerService(service: TimerService?) {
         timerService = service
         if (service != null) {
@@ -605,20 +617,32 @@ class MainViewModel : ViewModel() {
                                             val calendar = Calendar.getInstance()
                                             calendar.add(Calendar.DAY_OF_YEAR, -2)
                                             val twoDaysAgo = calendar.time
-                                            val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
-                                            val deadlineDateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
-                                            val simpleDeadlineDateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
+                                            // Более надежные парсеры дат
+                                            val dateParsers = listOf(
+                                                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()),
+                                                SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                                            )
+                                            val deadlineDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+                                            val simpleDeadlineDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
                                             val filteredTasksList = newRawTasksList.filter { task ->
                                                 if (!task.isCompleted) true
                                                 else {
                                                     if (showCompletedTasks) {
                                                         task.changedDate?.let { dateStr ->
-                                                            try {
-                                                                val taskChangedDate = dateFormat.parse(dateStr)
-                                                                taskChangedDate != null && taskChangedDate.after(twoDaysAgo)
-                                                            } catch (e: java.text.ParseException) {
-                                                                Timber.w(e, "Failed to parse changedDate '$dateStr' for task ${task.id}. Filtering out.")
+                                                            var parsedDate: Date? = null
+                                                            for (parser in dateParsers) {
+                                                                try {
+                                                                    parsedDate = parser.parse(dateStr)
+                                                                    if (parsedDate != null) break
+                                                                } catch (e: java.text.ParseException) { /* continue */ }
+                                                            }
+
+                                                            if (parsedDate != null) {
+                                                                parsedDate.after(twoDaysAgo)
+                                                            } else {
+                                                                Timber.w("Failed to parse changedDate '$dateStr' for task ${task.id}. Filtering out.")
                                                                 false
                                                             }
                                                         } ?: false
@@ -645,11 +669,14 @@ class MainViewModel : ViewModel() {
                                                     }
                                                     .thenByDescending { task ->
                                                         task.changedDate?.let { dateStr ->
-                                                            try {
-                                                                dateFormat.parse(dateStr)
-                                                            } catch (e: java.text.ParseException) {
-                                                                null
+                                                            var parsedDate: Date? = null
+                                                            for (parser in dateParsers) {
+                                                                try {
+                                                                    parsedDate = parser.parse(dateStr)
+                                                                    if (parsedDate != null) break
+                                                                } catch (e: java.text.ParseException) { /* continue */ }
                                                             }
+                                                            parsedDate
                                                         }
                                                     }
                                                     .thenBy { it.id.toIntOrNull() ?: 0 }
@@ -2233,6 +2260,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             }
                         )
                         Divider()
+                        DropdownMenuItem(
+                            text = { Text("Очистить кэш и перезагрузить") },
+                            onClick = {
+                                viewModel.forceReloadTasks()
+                                isSettingsExpanded = false
+                            }
+                        )
                         DropdownMenuItem(
                             text = { Text("Посмотреть логи") },
                             onClick = {
