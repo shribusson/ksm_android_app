@@ -547,173 +547,161 @@ class MainViewModel : ViewModel() {
             tasks = emptyList()
             return
         }
-        Timber.d("loadTasks called for user: ${users[currentUserIndex].name}")
+        val user = users[currentUserIndex]
+        Timber.d("loadTasks called for user: ${user.name}")
         isLoading = true
         errorMessage = null
-        val user = users[currentUserIndex]
 
-        // ИЗМЕНЕНО: Используем filter[MEMBER] для получения всех задач, где пользователь участник
-        val url = "${user.webhookUrl}tasks.task.list" +
-                "?filter[MEMBER]=${user.userId}" +
-                "&select[]=ID" +
-                "&select[]=TITLE" +
-                "&select[]=DESCRIPTION" +
-                "&select[]=TIME_SPENT_IN_LOGS" +
-                "&select[]=TIME_ESTIMATE" +
-                "&select[]=STATUS" +
-                "&select[]=RESPONSIBLE_ID" +
-                "&select[]=DEADLINE" +
-                "&select[]=CHANGED_DATE"
-                // Поля для файлов (UF_TASK_WEBDAV_FILES, UF_*) удалены
+        viewModelScope.launch {
+            try {
+                val allRawTasks = mutableListOf<Task>()
+                var start = 0
+                val calendar = Calendar.getInstance()
+                calendar.add(Calendar.MONTH, -1) // Получаем дату месяц назад
+                val oneMonthAgoDate = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()).format(calendar.time)
 
-        Timber.d("Loading tasks with URL: $url")
+                while (true) {
+                    val url = "${user.webhookUrl}tasks.task.list" +
+                            "?filter[MEMBER]=${user.userId}" +
+                            "&filter[>CHANGED_DATE]=$oneMonthAgoDate" + // Фильтр по дате изменения
+                            "&select[]=ID" +
+                            "&select[]=TITLE" +
+                            "&select[]=DESCRIPTION" +
+                            "&select[]=TIME_SPENT_IN_LOGS" +
+                            "&select[]=TIME_ESTIMATE" +
+                            "&select[]=STATUS" +
+                            "&select[]=RESPONSIBLE_ID" +
+                            "&select[]=DEADLINE" +
+                            "&select[]=CHANGED_DATE" +
+                            "&start=$start" // Параметр пагинации
 
-        val request = Request.Builder().url(url).build()
+                    Timber.d("Loading tasks page with URL: $url")
+                    val request = Request.Builder().url(url).build()
 
-        client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                viewModelScope.launch {
-                    isLoading = false
-                    errorMessage = "Ошибка подключения: ${e.message}"
-                    Timber.e(e, "Network error while loading tasks")
-                }
-            }
+                    val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }
 
-            override fun onResponse(call: Call, response: Response) {
-                viewModelScope.launch {
-                    isLoading = false
                     if (response.isSuccessful) {
-                        response.body?.let { body ->
-                            val responseText = String(body.bytes(), StandardCharsets.UTF_8)
-                            Timber.i("Bitrix Response for user ${user.name}: $responseText")
-                            viewModelScope.launch {
-                                try {
-                                    val output = withContext(Dispatchers.Default) {
-                                        Timber.d("Load tasks (bg): Processing ${responseText.length} chars for user ${user.name}")
-                                        try {
-                                            val json = JSONObject(responseText)
-                                            if (json.has("error")) {
-                                                val error = json.getJSONObject("error")
-                                                val apiErrorMessage = "Ошибка API: ${error.optString("error_description", "Неизвестная ошибка")}"
-                                                Timber.w("API error in loadTasks (bg): $apiErrorMessage")
-                                                return@withContext TaskProcessingOutput(emptyList(), 0, apiErrorMessage)
-                                            }
+                        val responseText = response.body?.string()
+                        if (responseText.isNullOrEmpty()) {
+                            Timber.w("Empty response body for page at start=$start")
+                            break
+                        }
+                        Timber.i("Bitrix Response for page at start=$start: $responseText")
+                        val json = JSONObject(responseText)
 
-                                            val newRawTasksList = mutableListOf<Task>()
-                                            if (json.has("result")) {
-                                                val result = json.get("result")
-                                                when (result) {
-                                                    is JSONObject -> {
-                                                        if (result.has("tasks")) {
-                                                            processTasks(result.get("tasks"), newRawTasksList)
-                                                        } else {
-                                                            processTasks(result, newRawTasksList)
-                                                        }
-                                                    }
-                                                    is JSONArray -> processTasks(result, newRawTasksList)
-                                                }
-                                            }
+                        if (json.has("error")) {
+                            val error = json.getJSONObject("error")
+                            val apiErrorMessage = "Ошибка API: ${error.optString("error_description", "Неизвестная ошибка")}"
+                            Timber.w("API error in loadTasks (page $start): $apiErrorMessage")
+                            errorMessage = apiErrorMessage
+                            break
+                        }
 
-                                            // Более надежные парсеры дат
-                                            val dateParsers = listOf(
-                                                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()),
-                                                SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-                                            )
-                                            val deadlineDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
-                                            val simpleDeadlineDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-
-                                            val filteredTasksList = newRawTasksList.filter { task ->
-                                                val keep = if (!task.isCompleted) {
-                                                    true // Всегда оставляем незавершенные задачи
-                                                } else {
-                                                    // Для завершенных задач, оставляем их, если включен переключатель.
-                                                    // Фильтр по дате временно убран, чтобы гарантировать отображение.
-                                                    showCompletedTasks
-                                                }
-                                                if (!keep) {
-                                                    Timber.d("Task ${task.id} ('${task.title}') with status ${task.status} was filtered out (isCompleted: ${task.isCompleted}, showCompletedTasks: $showCompletedTasks).")
-                                                }
-                                                keep
-                                            }
-                                            Timber.d("Raw tasks (bg): ${newRawTasksList.size}, Filtered (bg, showCompleted=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name}")
-
-                                            val newSortedTasksList = filteredTasksList.sortedWith(
-                                                compareBy<Task> { it.isCompleted }
-                                                    .thenBy { task ->
-                                                        task.deadline?.takeIf { it.isNotBlank() }?.let { deadlineStr ->
-                                                            try {
-                                                                deadlineDateFormat.parse(deadlineStr)
-                                                            } catch (e: java.text.ParseException) {
-                                                                try {
-                                                                    simpleDeadlineDateFormat.parse(deadlineStr)
-                                                                } catch (e2: java.text.ParseException) {
-                                                                    Timber.w(e, "Failed to parse deadline '$deadlineStr' for task ${task.id} in loadTasks, treating as far future.")
-                                                                    Date(Long.MAX_VALUE)
-                                                                }
-                                                            }
-                                                        } ?: Date(Long.MAX_VALUE)
-                                                    }
-                                                    .thenByDescending { task ->
-                                                        task.changedDate?.let { dateStr ->
-                                                            var parsedDate: Date? = null
-                                                            for (parser in dateParsers) {
-                                                                try {
-                                                                    parsedDate = parser.parse(dateStr)
-                                                                    if (parsedDate != null) break
-                                                                } catch (e: java.text.ParseException) { /* continue */ }
-                                                            }
-                                                            parsedDate
-                                                        }
-                                                    }
-                                                    .thenBy { it.id.toIntOrNull() ?: 0 }
-                                            )
-                                            TaskProcessingOutput(newSortedTasksList, newRawTasksList.size, null)
-                                        } catch (e: Exception) {
-                                            Timber.e(e, "Error during background task processing for user ${user.name}")
-                                            TaskProcessingOutput(emptyList(), 0, "Ошибка обработки данных: ${e.message}")
-                                        }
-                                    }
-
-                                    if (output.processingError != null) {
-                                        errorMessage = output.processingError
+                        val tasksOnPage = mutableListOf<Task>()
+                        if (json.has("result")) {
+                            val result = json.get("result")
+                            when (result) {
+                                is JSONObject -> {
+                                    if (result.has("tasks")) {
+                                        processTasks(result.get("tasks"), tasksOnPage)
                                     } else {
-                                        if (!areTaskListsFunctionallyEquivalent(output.processedTasks, tasks)) {
-                                            Timber.i("Task list for user ${user.name} has changed. Updating UI with ${output.processedTasks.size} tasks.")
-                                            tasks = output.processedTasks
-                                        } else {
-                                            Timber.i("Task list for user ${user.name} has not changed (${output.processedTasks.size} tasks). No UI update for tasks list.")
-                                        }
-                                        errorMessage = null
-
-                                        if (output.processedTasks.isEmpty() && tasks.isEmpty()) {
-                                            Timber.w("No displayable tasks for user ${user.name} after filtering in loadTasks. Current tasks list is also empty.")
-                                            // Можно добавить сообщение для пользователя, если это не ошибка
-                                            // errorMessage = "Активные задачи не найдены."
-                                        }
+                                        processTasks(result, tasksOnPage)
                                     }
-                                } catch (e: Exception) {
-                                    errorMessage = "Ошибка чтения ответа: ${e.message}"
-                                    Timber.e(e, "Error in loadTasks onResponse (main thread part) for user ${user.name}")
                                 }
+                                is JSONArray -> processTasks(result, tasksOnPage)
                             }
-                        } ?: run {
-                             viewModelScope.launch {
-                                errorMessage = "Пустой ответ от сервера."
-                                Timber.w("Response body is null in loadTasks for user ${user.name}")
-                             }
+                        }
+                        allRawTasks.addAll(tasksOnPage)
+
+                        if (json.has("next")) {
+                            start = json.getInt("next")
+                            Timber.d("Pagination: More tasks available. Next page starts at: $start")
+                        } else {
+                            Timber.d("Pagination: All pages loaded. Total raw tasks fetched: ${allRawTasks.size}")
+                            break // Больше страниц нет
                         }
                     } else {
-                        viewModelScope.launch {
-                            errorMessage = "Ошибка сервера: ${response.code} - ${response.message}"
-                            Timber.e("HTTP error in loadTasks: ${response.code} - ${response.message}")
+                        errorMessage = "Ошибка сервера: ${response.code} - ${response.message}"
+                        Timber.e("HTTP error in loadTasks: ${response.code} - ${response.message}")
+                        break // Прерываем при ошибке
+                    }
+                }
+
+                // Обработка полного списка задач
+                val output = withContext(Dispatchers.Default) {
+                    val filteredTasksList = allRawTasks.filter { task ->
+                        val keep = if (!task.isCompleted) {
+                            true
+                        } else {
+                            showCompletedTasks
+                        }
+                        if (!keep) {
+                            Timber.d("Task ${task.id} ('${task.title}') with status ${task.status} was filtered out (isCompleted: ${task.isCompleted}, showCompletedTasks: $showCompletedTasks).")
+                        }
+                        keep
+                    }
+                    Timber.d("Total raw tasks (last month): ${allRawTasks.size}, Filtered (showCompleted=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name}")
+
+                    val dateParsers = listOf(
+                        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()),
+                        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                    )
+                    val deadlineDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+                    val simpleDeadlineDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
+                    val newSortedTasksList = filteredTasksList.sortedWith(
+                        compareBy<Task> { it.isCompleted }
+                            .thenBy { task ->
+                                task.deadline?.takeIf { it.isNotBlank() }?.let { deadlineStr ->
+                                    try { deadlineDateFormat.parse(deadlineStr) } catch (e: Exception) {
+                                        try { simpleDeadlineDateFormat.parse(deadlineStr) } catch (e2: Exception) { Date(Long.MAX_VALUE) }
+                                    }
+                                } ?: Date(Long.MAX_VALUE)
+                            }
+                            .thenByDescending { task ->
+                                task.changedDate?.let { dateStr ->
+                                    var parsedDate: Date? = null
+                                    for (parser in dateParsers) {
+                                        try { parsedDate = parser.parse(dateStr); if (parsedDate != null) break } catch (e: Exception) { /* continue */ }
+                                    }
+                                    parsedDate
+                                }
+                            }
+                            .thenBy { it.id.toIntOrNull() ?: 0 }
+                    )
+                    TaskProcessingOutput(newSortedTasksList, allRawTasks.size, null)
+                }
+
+                // Обновление UI
+                if (output.processingError != null) {
+                    errorMessage = output.processingError
+                } else {
+                    if (!areTaskListsFunctionallyEquivalent(output.processedTasks, tasks)) {
+                        Timber.i("Task list for user ${user.name} has changed. Updating UI with ${output.processedTasks.size} tasks.")
+                        tasks = output.processedTasks
+                    } else {
+                        Timber.i("Task list for user ${user.name} has not changed (${output.processedTasks.size} tasks). No UI update for tasks list.")
+                    }
+                    errorMessage = null
+
+                    if (output.processedTasks.isEmpty() && tasks.isEmpty()) {
+                        Timber.w("No displayable tasks for user ${user.name} after filtering. Total raw tasks for last month: ${output.rawTaskCount}")
+                        if (output.rawTaskCount > 0) {
+                            errorMessage = "Задачи за последний месяц найдены, но отфильтрованы. Попробуйте изменить настройки отображения."
+                        } else {
+                            errorMessage = "Активные задачи за последний месяц не найдены."
                         }
                     }
                 }
-            }
-        })
-    }
 
-    // Методы loadTasksSimple и loadTasksAlternative удалены для упрощения
+            } catch (e: Exception) {
+                errorMessage = "Ошибка загрузки задач: ${e.message}"
+                Timber.e(e, "Failed to load all tasks with pagination")
+            } finally {
+                isLoading = false
+            }
+        }
+    }
 
     private fun processTasks(tasksData: Any, tasksList: MutableList<Task>) {
         Timber.d("Processing tasks from data type: ${tasksData.javaClass.simpleName}")
@@ -2221,7 +2209,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                                         color = MaterialTheme.colorScheme.primary,
                                         fontWeight = FontWeight.Bold
                                     )
-                                    Text("Показывать завершенные (2 дня)")
+                                    Text("Показывать завершенные")
                                 }
                             },
                             onClick = {
