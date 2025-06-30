@@ -1067,7 +1067,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .setConstraints(constraints)
             .setBackoffCriteria(
                 BackoffPolicy.EXPONENTIAL,
-                OneTimeWorkRequest.MIN_BACKOFF_MILLIS,
+                WorkRequest.MIN_BACKOFF_MILLIS,
                 TimeUnit.MILLISECONDS
             )
             .addTag("sync-time-${task.id}")
