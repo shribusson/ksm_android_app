@@ -1,5 +1,6 @@
 package com.example.bitrix_app
 
+import android.app.Application
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -7,6 +8,8 @@ import android.content.Context
 import android.content.ComponentName
 import android.content.Intent
 import android.content.ServiceConnection
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build // Добавленный импорт
 import android.os.Bundle
 import android.os.IBinder
@@ -64,9 +67,11 @@ import androidx.compose.foundation.ExperimentalFoundationApi // Для combinedC
 import androidx.compose.foundation.combinedClickable // Для long press
 import androidx.activity.compose.rememberLauncherForActivityResult // Для запроса разрешений
 import androidx.activity.result.contract.ActivityResultContracts // Для запроса разрешений
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.work.*
 import com.example.bitrix_app.ui.theme.* // Импортируем все из пакета темы
 import timber.log.Timber
 import kotlinx.coroutines.delay
@@ -82,6 +87,7 @@ import org.json.JSONException // Добавляем этот импорт
 import org.json.JSONObject
 import java.io.IOException
 import java.util.*
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import java.text.SimpleDateFormat // Добавим для formatDeadline
 import java.nio.charset.StandardCharsets
@@ -182,7 +188,7 @@ data class TaskProcessingOutput(
 
 // TimemanApiStatus enum удален
 
-class MainViewModel : ViewModel() {
+class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val client = OkHttpClient()
 
     // Пользователи теперь управляются через MutableState и SharedPreferences
@@ -276,6 +282,10 @@ class MainViewModel : ViewModel() {
     var showDeleteConfirmDialogForTask by mutableStateOf<Task?>(null)
         private set
     var deleteTaskStatusMessage by mutableStateOf<String?>(null)
+        private set
+
+    // Состояние для офлайн-синхронизации
+    var pendingSyncMessage by mutableStateOf<String?>(null)
         private set
 
     // --- Состояния для управления пользователями ---
@@ -870,7 +880,7 @@ class MainViewModel : ViewModel() {
     }
 
 
-    fun toggleTimer(task: Task) {
+    fun toggleTimer(context: Context, task: Task) {
         if (users.isEmpty()) return
         val service = timerService ?: return
         val currentServiceState = timerServiceState
@@ -900,7 +910,7 @@ class MainViewModel : ViewModel() {
                 val previousTask = tasks.find { it.id == currentServiceState.activeTaskId }
                 if (previousTask != null) {
                     val secondsToSaveForPrevious = service.stopTaskTimer(currentUser.userId)
-                    stopTimerAndSaveTime(previousTask, secondsToSaveForPrevious)
+                    stopTimerAndSaveTime(context, previousTask, secondsToSaveForPrevious)
                     if (sendComments) {
                         sendTimerComment(previousTask, "Таймер остановлен (переключение на задачу ${task.id})", secondsToSaveForPrevious)
                     }
@@ -964,113 +974,138 @@ class MainViewModel : ViewModel() {
     }
 
     // Сохранение времени в Битрикс при остановке таймера (вызывается ViewModel)
-    private fun stopTimerAndSaveTime(task: Task, secondsToSave: Int) {
+    private fun stopTimerAndSaveTime(context: Context, task: Task, secondsToSave: Int) {
         if (users.isEmpty()) return
         val user = users[currentUserIndex]
-        Timber.i("stopTimerAndSaveTime (ViewModel) called for task ${task.id}, user ${user.name}, seconds: $secondsToSave")
+        
+        // Рассчитываем время, прошедшее только за эту сессию
+        val elapsedSecondsThisSession = secondsToSave - task.timeSpent
 
-        if (secondsToSave < 10) {
-            Timber.i("Timer too short (${secondsToSave}s), not saving to Bitrix for task ${task.id}")
+        Timber.i("stopTimerAndSaveTime called for task ${task.id}, user ${user.name}. Total seconds from service: $secondsToSave. Initial task time: ${task.timeSpent}. Elapsed this session: $elapsedSecondsThisSession")
+
+        // Сохраняем только если прошло достаточно времени в этой сессии
+        if (elapsedSecondsThisSession < 10) {
+            Timber.i("Elapsed time for this session is too short (${elapsedSecondsThisSession}s), not saving to Bitrix for task ${task.id}")
             return
         }
 
-        val url = "${user.webhookUrl}task.elapseditem.add"
+        viewModelScope.launch {
+            if (isNetworkAvailable()) {
+                // Передаем только дельту времени
+                val success = syncTimeDirectly(task, elapsedSecondsThisSession)
+                if (!success) {
+                    Timber.w("Direct sync failed, falling back to WorkManager for task ${task.id}")
+                    enqueueSaveTimeWorker(context, task, elapsedSecondsThisSession)
+                }
+            } else {
+                Timber.i("Network not available. Enqueuing save time worker for task ${task.id}")
+                enqueueSaveTimeWorker(context, task, elapsedSecondsThisSession)
+            }
+        }
+    }
 
+    private suspend fun syncTimeDirectly(task: Task, secondsToSave: Int): Boolean = withContext(Dispatchers.IO) {
+        val user = users[currentUserIndex]
+        val url = "${user.webhookUrl}task.elapseditem.add"
         val formBody = FormBody.Builder()
             .add("taskId", task.id)
             .add("arFields[SECONDS]", secondsToSave.toString())
             .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(secondsToSave)})")
             .add("arFields[USER_ID]", user.userId)
             .build()
+        val request = Request.Builder().url(url).post(formBody).build()
 
-        val request = Request.Builder()
-            .url(url)
-            .post(formBody)
-            .build()
-
-        client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                viewModelScope.launch {
-                    Timber.e(e, "Save time network error for task ${task.id}")
-                }
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                viewModelScope.launch {
-                    response.body?.let { body ->
-                        val responseText = body.string()
-                        Timber.d("Save time response for task ${task.id}: $responseText")
-
-                        try {
-                            val json = JSONObject(responseText)
-                            if (json.has("error")) {
-                                val errorDesc = json.optString("error_description", "Unknown error")
-                                Timber.w("Error saving time for task ${task.id}: $errorDesc. Trying simplified parameters...")
-                                saveTimeSimplified(task, secondsToSave)
-                            } else if (json.has("result")) {
-                                Timber.i("Time saved successfully for task ${task.id}. Reloading tasks.")
-                                delay(1000)
-                                loadTasks()
-                            }
-                        } catch (e: Exception) {
-                            Timber.e(e, "Parse error in save time response for task ${task.id}")
+        try {
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val responseText = response.body?.string()
+                Timber.d("Save time response for task ${task.id}: $responseText")
+                val json = JSONObject(responseText ?: "{}")
+                if (json.has("result")) {
+                    Timber.i("Time saved successfully for task ${task.id}. Reloading tasks.")
+                    withContext(Dispatchers.Main) {
+                        viewModelScope.launch {
+                            delay(1000)
+                            loadTasks()
                         }
                     }
-                    response.close()
+                    return@withContext true
+                } else {
+                    val errorDesc = json.optString("error_description", "Unknown API error")
+                    Timber.w("Error saving time for task ${task.id}: $errorDesc.")
+                    withContext(Dispatchers.Main) {
+                        errorMessage = "Ошибка сохранения времени: $errorDesc"
+                    }
+                    return@withContext true // Считается "обработанной", не нужно ставить в очередь.
                 }
+            } else {
+                Timber.w("HTTP error saving time for task ${task.id}: ${response.code}. Fallback possible.")
+                return@withContext false
             }
-        })
+        } catch (e: IOException) {
+            Timber.e(e, "Network error saving time for task ${task.id}. Fallback needed.")
+            return@withContext false
+        }
     }
 
-    // Упрощенный способ сохранения времени без USER_ID
-    private fun saveTimeSimplified(task: Task, secondsToSave: Int) {
-        if (users.isEmpty()) return
+    private fun enqueueSaveTimeWorker(context: Context, task: Task, seconds: Int) {
         val user = users[currentUserIndex]
-        Timber.i("saveTimeSimplified called for task ${task.id}, user ${user.name}, seconds: $secondsToSave")
-        val url = "${user.webhookUrl}task.elapseditem.add"
+        val workData = workDataOf(
+            SaveTimeWorker.KEY_TASK_ID to task.id,
+            SaveTimeWorker.KEY_SECONDS to seconds,
+            SaveTimeWorker.KEY_USER_ID to user.userId,
+            SaveTimeWorker.KEY_WEBHOOK_URL to user.webhookUrl,
+            SaveTimeWorker.KEY_USER_NAME to user.name
+        )
 
-        val formBody = FormBody.Builder()
-            .add("taskId", task.id)
-            .add("arFields[SECONDS]", secondsToSave.toString())
-            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(secondsToSave)})")
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
-        val request = Request.Builder()
-            .url(url)
-            .post(formBody)
+        val saveTimeWorkRequest = OneTimeWorkRequestBuilder<SaveTimeWorker>()
+            .setInputData(workData)
+            .setConstraints(constraints)
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                OneTimeWorkRequest.MIN_BACKOFF_MILLIS,
+                TimeUnit.MILLISECONDS
+            )
+            .addTag("sync-time-${task.id}")
             .build()
 
-        client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                viewModelScope.launch {
-                    Timber.e(e, "Simplified save time error for task ${task.id}")
-                }
-            }
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "saveTime_${task.id}_${System.currentTimeMillis()}",
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            saveTimeWorkRequest
+        )
 
-            override fun onResponse(call: Call, response: Response) {
-                viewModelScope.launch {
-                    response.body?.let { body ->
-                        val responseText = body.string()
-                        Timber.d("Simplified save time response for task ${task.id}: $responseText")
-
-                        try {
-                            val json = JSONObject(responseText)
-                            if (json.has("result")) {
-                                Timber.i("Time saved successfully (simplified) for task ${task.id}. Reloading tasks.")
-                                delay(1000)
-                                loadTasks()
-                            } else {
-                                val errorDesc = json.optString("error_description", "Unknown error")
-                                Timber.w("Error saving time (simplified) for task ${task.id}: $errorDesc")
-                            }
-                        } catch (e: Exception) {
-                            Timber.e(e, "Simplified parse error in save time response for task ${task.id}")
-                        }
-                    }
-                    response.close()
-                }
+        pendingSyncMessage = "Нет сети. Время для задачи '${task.title}' будет сохранено позже."
+        viewModelScope.launch {
+            delay(5000)
+            if (pendingSyncMessage?.contains(task.title) == true) {
+                pendingSyncMessage = null
             }
-        })
+        }
+        Timber.i("Enqueued SaveTimeWorker for task ${task.id}.")
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val connectivityManager = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val network = connectivityManager.activeNetwork ?: return false
+            val activeNetwork = connectivityManager.getNetworkCapabilities(network) ?: return false
+            return when {
+                activeNetwork.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> true
+                activeNetwork.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> true
+                activeNetwork.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> true
+                else -> false
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            val networkInfo = connectivityManager.activeNetworkInfo ?: return false
+            @Suppress("DEPRECATION")
+            return networkInfo.isConnected
+        }
     }
 
     // Форматирование времени для отображения
@@ -1084,7 +1119,7 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    fun completeTask(task: Task) {
+    fun completeTask(context: Context, task: Task) {
         if (users.isEmpty()) return
         val service = timerService ?: return
         val currentServiceState = timerServiceState
@@ -1101,7 +1136,7 @@ class MainViewModel : ViewModel() {
         }
 
         if (timerWasActiveOrPausedForThisTask && secondsToSave > 0) {
-            stopTimerAndSaveTime(task, secondsToSave)
+            stopTimerAndSaveTime(context, task, secondsToSave)
             if (sendComments) {
                 sendTimerComment(task, "Задача завершена, таймер остановлен", secondsToSave)
             }
@@ -1235,7 +1270,7 @@ class MainViewModel : ViewModel() {
                                     Timber.i("Standard task '${taskType.titlePrefix}' (ID: $createdTaskId) created successfully. Response: $responseText")
 
                                     val newlyCreatedTask = createTaskFromJson(createdTaskJson, createdTaskId)
-                                    toggleTimer(newlyCreatedTask)
+                                    toggleTimer(context, newlyCreatedTask)
 
                                     delay(1500)
                                     loadTasks()
@@ -1263,7 +1298,7 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    fun stopAndSaveCurrentTimer() {
+    fun stopAndSaveCurrentTimer(context: Context) {
         if (users.isEmpty()) return
         val service = timerService ?: return
         val currentServiceState = timerServiceState ?: return
@@ -1284,7 +1319,7 @@ class MainViewModel : ViewModel() {
         Timber.d("Timer stopped for task ${task.id} via stopAndSaveCurrentTimer. Seconds from service: $secondsToSave")
 
         if (secondsToSave > 0) {
-            stopTimerAndSaveTime(task, secondsToSave)
+            stopTimerAndSaveTime(context, task, secondsToSave)
             if (sendComments) {
                 sendTimerComment(task, "Таймер остановлен, время учтено", secondsToSave)
             }
