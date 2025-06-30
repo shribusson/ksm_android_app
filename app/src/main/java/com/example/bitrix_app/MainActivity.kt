@@ -2025,7 +2025,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         Spacer(modifier = Modifier.width(8.dp))
 
                         IconButton(
-                            onClick = { viewModel.stopAndSaveCurrentTimer() },
+                            onClick = { viewModel.stopAndSaveCurrentTimer(context) },
                             modifier = Modifier.size(40.dp)
                         ) {
                             Icon(
@@ -2067,8 +2067,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             val taskCreationMessage = viewModel.quickTaskCreationStatus
             val textCommentMessage = viewModel.textCommentStatusMessage
             val deleteTaskMessage = viewModel.deleteTaskStatusMessage
+            val pendingSyncMessage = viewModel.pendingSyncMessage
 
-            val generalMessageToDisplay = deleteTaskMessage ?: textCommentMessage ?: taskCreationMessage
+            val generalMessageToDisplay = pendingSyncMessage ?: deleteTaskMessage ?: textCommentMessage ?: taskCreationMessage
             if (generalMessageToDisplay != null) {
                 val isGeneralError = viewModel.errorMessage != null ||
                                      generalMessageToDisplay.contains("Ошибка", ignoreCase = true) ||
@@ -2108,8 +2109,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
 
                         TaskCard(
                             task = task,
-                            onTimerToggle = { viewModel.toggleTimer(it) },
-                            onCompleteTask = { viewModel.completeTask(it) },
+                            onTimerToggle = { viewModel.toggleTimer(context, it) },
+                            onCompleteTask = { viewModel.completeTask(context, it) },
                             onAddCommentClick = { viewModel.prepareForTextComment(it) },
                             onLongPress = { viewModel.requestDeleteTask(it) },
                             isTimerRunningForThisTask = isTimerRunningForThisTask,

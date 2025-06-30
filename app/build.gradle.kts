@@ -62,6 +62,9 @@ dependencies {
     // Material Icons Extended for more icons like Mic
     implementation("androidx.compose.material:material-icons-extended:1.6.7") // Используем актуальную стабильную версию
 
+    // WorkManager for offline sync
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
