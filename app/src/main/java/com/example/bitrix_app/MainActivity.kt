@@ -750,7 +750,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val key = keys.next()
                         val tagObject = tagsData.optJSONObject(key)
                         if (tagObject != null) {
-                            tagsList.add(tagObject.optString("name", "тег?"))
+                            // Try to get "name", fallback to "TITLE", then to "title"
+                            var tagName = tagObject.optString("name")
+                            if (tagName.isBlank()) {
+                                tagName = tagObject.optString("TITLE")
+                            }
+                            if (tagName.isBlank()) {
+                                tagName = tagObject.optString("title")
+                            }
+
+                            if (tagName.isNotBlank()) {
+                                tagsList.add(tagName)
+                            } else {
+                                tagsList.add("?") // Add a placeholder if no name/title found
+                                Timber.w("Could not find 'name' or 'TITLE'/'title' for tag in task $taskIdForLog. Tag object: $tagObject")
+                            }
                         }
                     }
                 }
@@ -758,7 +772,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     // This is a fallback for other possible formats.
                     // Format 1: "tags": [ "срочно", "дизайн" ]
                     // Format 2: "tags": [ { "name": "срочно" }, { "name": "дизайн" } ]
-                    // If the array is empty, this loop doesn't run, which is correct.
                     for (i in 0 until tagsData.length()) {
                         when (val item = tagsData.get(i)) {
                             is String -> {
@@ -767,9 +780,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 }
                             }
                             is JSONObject -> {
-                                val tagName = item.optString("name")
+                                var tagName = item.optString("name")
+                                if (tagName.isBlank()) {
+                                    tagName = item.optString("TITLE")
+                                }
+                                if (tagName.isBlank()) {
+                                    tagName = item.optString("title")
+                                }
                                 if (tagName.isNotBlank()) {
                                     tagsList.add(tagName)
+                                } else {
+                                    Timber.w("Could not find 'name' or 'TITLE'/'title' for tag in JSONArray for task $taskIdForLog. Tag object: $item")
                                 }
                             }
                         }
