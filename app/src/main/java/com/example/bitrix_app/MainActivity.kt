@@ -134,15 +134,16 @@ data class Task(
     val timeEstimate: Int,
     val status: String = "",
     val deadline: String? = null, // Крайний срок задачи
-    val changedDate: String? = null // Добавлено поле для даты изменения
-    // Поле isTimerRunning удалено, так как состояние таймера управляется в UserTimerData
-    // parentId удален
+    val changedDate: String? = null, // Добавлено поле для даты изменения
+    val tags: List<String> = emptyList(), // Список тегов
+    val isImportant: Boolean = false      // Признак важной задачи
 ) {
     val progressPercent: Int get() = if (timeEstimate > 0) (timeSpent * 100 / timeEstimate) else 0
     val isOverdue: Boolean get() = progressPercent > 100
     val isCompleted: Boolean get() = status == "5" // 5 = Завершена
     val isInProgress: Boolean get() = status == "2" // 2 = В работе
     val isPending: Boolean get() = status == "3" // 3 = Ждет выполнения
+    val isWaitingForControl: Boolean get() = status == "4" // Ждет контроля (статус 4)
 
     // statusText больше не используется в TaskCard в текущей конфигурации, но оставим на случай будущего использования
     val statusText: String get() = when (status) {
@@ -577,6 +578,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "&select[]=RESPONSIBLE_ID" +
                             "&select[]=DEADLINE" +
                             "&select[]=CHANGED_DATE" +
+                            "&select[]=PRIORITY" +
+                            "&select[]=TAGS" +
                             "&start=$start" // Параметр пагинации
 
                     Timber.d("Loading tasks page with URL: $url")
@@ -732,18 +735,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val timeSpent = taskJson.optInt("timeSpentInLogs",
             taskJson.optInt("TIME_SPENT_IN_LOGS", 0))
 
-        // Логика парсинга UF_TASK_WEBDAV_FILES удалена
+        val tagsList = mutableListOf<String>()
+        val taskIdForLog = taskJson.optString("id", taskJson.optString("ID", fallbackId))
+
+        if (taskJson.has("tags")) {
+            val tagsData = taskJson.get("tags")
+            Timber.d("Task ID $taskIdForLog has 'tags' data of type ${tagsData.javaClass.simpleName}: $tagsData")
+
+            when (tagsData) {
+                is JSONObject -> {
+                    // Format: "tags": { "4": { "id": "4", "name": "срочно" } }
+                    val keys = tagsData.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        val tagObject = tagsData.optJSONObject(key)
+                        if (tagObject != null) {
+                            tagsList.add(tagObject.optString("name", "тег?"))
+                        }
+                    }
+                }
+                is JSONArray -> {
+                    // This is a fallback for other possible formats.
+                    // Format 1: "tags": [ "срочно", "дизайн" ]
+                    // Format 2: "tags": [ { "name": "срочно" }, { "name": "дизайн" } ]
+                    // If the array is empty, this loop doesn't run, which is correct.
+                    for (i in 0 until tagsData.length()) {
+                        when (val item = tagsData.get(i)) {
+                            is String -> {
+                                if (item.isNotBlank()) {
+                                    tagsList.add(item)
+                                }
+                            }
+                            is JSONObject -> {
+                                val tagName = item.optString("name")
+                                if (tagName.isNotBlank()) {
+                                    tagsList.add(tagName)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         return Task(
-            id = taskJson.optString("id", taskJson.optString("ID", fallbackId)),
+            id = taskIdForLog,
             title = taskJson.optString("title", taskJson.optString("TITLE", "Задача без названия")),
             description = taskJson.optString("description", taskJson.optString("DESCRIPTION", "")),
             timeSpent = timeSpent,
             timeEstimate = taskJson.optInt("timeEstimate", taskJson.optInt("TIME_ESTIMATE", 7200)),
             status = taskJson.optString("status", taskJson.optString("STATUS", "")),
             deadline = taskJson.optString("deadline", taskJson.optString("DEADLINE", null)),
-            changedDate = taskJson.optString("changedDate", taskJson.optString("CHANGED_DATE", null))
-            // attachedFileIds удалено
+            changedDate = taskJson.optString("changedDate", taskJson.optString("CHANGED_DATE", null)),
+            tags = tagsList,
+            isImportant = taskJson.optString("priority", taskJson.optString("PRIORITY", "0")) == "2"
         )
     }
 
@@ -767,7 +812,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 newTask.timeSpent != oldTask.timeSpent ||
                 newTask.timeEstimate != oldTask.timeEstimate ||
                 newTask.changedDate != oldTask.changedDate ||
-                newTask.isCompleted != oldTask.isCompleted
+                newTask.isCompleted != oldTask.isCompleted ||
+                newTask.isImportant != oldTask.isImportant ||
+                newTask.tags != oldTask.tags
             ) {
                 Timber.d("Task lists differ: Task with ID ${newTask.id} has changed fields.")
                 return false
@@ -2238,13 +2285,20 @@ fun TaskCard(
         isTimerRunningForThisTask,
         isTimerUserPausedForThisTask,
         task.isOverdue,
+        task.isImportant,
+        task.isWaitingForControl,
         scheme.surfaceVariant,
         StatusGreen, StatusBlue, StatusYellow, StatusRed
     ) {
+        val importantColor = Color(0xFFFFFBE6) // Светло-желтый для важных
+        val waitingForControlColor = Color(0xFFE6F7FF) // Светло-голубой для контроля
+
         when {
-            task.isCompleted -> StatusGreen
             isTimerRunningForThisTask -> StatusBlue
             isTimerUserPausedForThisTask -> StatusYellow
+            task.isCompleted -> StatusGreen
+            task.isImportant -> importantColor
+            task.isWaitingForControl -> waitingForControlColor
             task.isOverdue -> StatusRed
             else -> scheme.surfaceVariant
         }
@@ -2285,6 +2339,18 @@ fun TaskCard(
                                 .padding(start = 8.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+            }
+
+            if (task.tags.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                com.google.accompanist.flowlayout.FlowRow(
+                    mainAxisSpacing = 6.dp,
+                    crossAxisSpacing = 6.dp
+                ) {
+                    task.tags.forEach { tag ->
+                        TagChip(text = tag)
                     }
                 }
             }
@@ -2677,4 +2743,20 @@ fun RemoveUserConfirmationDialog(
             }
         }
     )
+}
+
+@Composable
+fun TagChip(text: String) {
+    Box(
+        modifier = Modifier
+            .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f), androidx.compose.foundation.shape.RoundedCornerShape(50))
+            .padding(horizontal = 10.dp, vertical = 5.dp)
+    ) {
+        Text(
+            text = text,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
 }
