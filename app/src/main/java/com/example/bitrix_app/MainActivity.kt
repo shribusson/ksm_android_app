@@ -203,20 +203,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var errorMessage by mutableStateOf<String?>(null)
     var sendComments by mutableStateOf(false) // Настройка отправки комментариев (по умолчанию отключена)
     var showCompletedTasks by mutableStateOf(true) // Настройка отображения завершенных задач
-    var quickTaskDisplayMode by mutableStateOf(QuickTaskDisplayMode.ICONS) // Режим отображения быстрых задач
 
     // Состояние раскрытия карточек задач
     var expandedTaskIds by mutableStateOf<Set<String>>(emptySet())
         private set
-
-    // Enum для стандартных типов задач
-    enum class StandardTaskType(val titlePrefix: String, val emoji: String, val defaultPriority: String = "1") {
-        RIGGING("Такелаж", "🏗️"), // U+1F3D7
-        FIX_MISTAKES("Исправление косяков", "🛠️"), // U+1F6E0
-        UNEXPECTED("Неожиданная задача", "✨", "2") // U+2728, High priority
-    }
-
-    enum class QuickTaskDisplayMode { ICONS, DROPDOWN }
 
     // Состояния для чек-листов и подзадач
     var checklistsMap by mutableStateOf<Map<String, List<ChecklistItem>>>(emptyMap())
@@ -255,10 +245,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Состояние таймера, полученное от сервиса
     var timerServiceState by mutableStateOf<TimerServiceState?>(null) // Сделаем nullable
-        private set
-
-    // Состояние для обратной связи при быстром создании задач
-    var quickTaskCreationStatus by mutableStateOf<String?>(null)
         private set
 
     // Состояния для диалога добавления текстового комментария
@@ -304,7 +290,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // --- Управление SharedPreferences ---
     private val sharedPreferencesName = "BitrixAppPrefs"
     private val currentUserIndexKey = "currentUserIndex"
-    private val quickTaskDisplayModeKey = "quickTaskDisplayMode"
     private val usersListKey = "usersListKey" // Ключ для сохранения списка пользователей
 
     private fun saveCurrentUserIndex(context: Context, index: Int) {
@@ -318,25 +303,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val loadedIndex = prefs.getInt(currentUserIndexKey, 0)
         Timber.d("Loaded currentUserIndex: $loadedIndex")
         return if (users.isNotEmpty() && loadedIndex >= 0 && loadedIndex < users.size) loadedIndex else 0
-    }
-
-    private fun saveQuickTaskDisplayMode(context: Context, mode: QuickTaskDisplayMode) {
-        val prefs = context.getSharedPreferences(sharedPreferencesName, Context.MODE_PRIVATE)
-        prefs.edit().putString(quickTaskDisplayModeKey, mode.name).apply()
-        Timber.d("Saved QuickTaskDisplayMode: ${mode.name}")
-    }
-
-    private fun loadQuickTaskDisplayMode(context: Context): QuickTaskDisplayMode {
-        val prefs = context.getSharedPreferences(sharedPreferencesName, Context.MODE_PRIVATE)
-        val modeName = prefs.getString(quickTaskDisplayModeKey, QuickTaskDisplayMode.ICONS.name)
-        return try {
-            QuickTaskDisplayMode.valueOf(modeName ?: QuickTaskDisplayMode.ICONS.name)
-        } catch (e: IllegalArgumentException) {
-            Timber.w(e, "Failed to parse QuickTaskDisplayMode, defaulting to ICONS.")
-            QuickTaskDisplayMode.ICONS
-        }.also {
-            Timber.d("Loaded QuickTaskDisplayMode: $it")
-        }
     }
 
     private fun saveUsers(context: Context, usersToSave: List<User>) {
@@ -513,7 +479,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Timber.d("MainViewModel initializing with context...")
         users = loadUsers(context)
         currentUserIndex = loadCurrentUserIndex(context) // Загружаем сохраненный индекс
-        quickTaskDisplayMode = loadQuickTaskDisplayMode(context) // Загружаем режим отображения быстрых задач
         if (users.isNotEmpty()) {
             loadTasks()
             val currentUserForInit = users[currentUserIndex]
@@ -1269,16 +1234,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadTasks()
     }
 
-    fun toggleQuickTaskDisplayMode(context: Context) {
-        quickTaskDisplayMode = if (quickTaskDisplayMode == QuickTaskDisplayMode.ICONS) {
-            QuickTaskDisplayMode.DROPDOWN
-        } else {
-            QuickTaskDisplayMode.ICONS
-        }
-        saveQuickTaskDisplayMode(context, quickTaskDisplayMode)
-        Timber.i("Quick task display mode toggled to: $quickTaskDisplayMode")
-    }
-
     // updateWorkStatus удален
 
     // --- Timeman API Calls - УДАЛЕНЫ ---
@@ -1293,76 +1248,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     loadTasks()
                 }
             }
-        }
-    }
-
-    fun createStandardTask(taskType: StandardTaskType, context: Context) {
-        if (users.isEmpty()) return
-        viewModelScope.launch {
-            quickTaskCreationStatus = "Создание задачи '${taskType.titlePrefix}'..."
-            errorMessage = null
-            val user = users[currentUserIndex]
-            val taskTitle = "${taskType.titlePrefix} - ${user.name}"
-
-            val url = "${user.webhookUrl}tasks.task.add"
-            val formBodyBuilder = FormBody.Builder()
-                .add("fields[TITLE]", taskTitle)
-                .add("fields[RESPONSIBLE_ID]", user.userId)
-                .add("fields[CREATED_BY]", "240")
-                .add("fields[DESCRIPTION]", "Стандартная задача, создана автоматически из приложения.")
-                .add("fields[PRIORITY]", taskType.defaultPriority)
-
-            val request = Request.Builder().url(url).post(formBodyBuilder.build()).build()
-            Timber.d("Creating standard task: ${taskType.titlePrefix} for user ${user.name}. URL: $url, Title: $taskTitle")
-
-            client.newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    viewModelScope.launch {
-                        quickTaskCreationStatus = "Ошибка создания задачи: ${e.message}"
-                        Timber.e(e, "Network error while creating standard task '${taskType.titlePrefix}'")
-                        delay(3500)
-                        quickTaskCreationStatus = null
-                    }
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    viewModelScope.launch {
-                        val responseText = response.body?.string()
-                        if (response.isSuccessful && responseText != null) {
-                            try {
-                                val json = JSONObject(responseText)
-                                if (json.has("result") && json.getJSONObject("result").has("task")) {
-                                    val createdTaskJson = json.getJSONObject("result").getJSONObject("task")
-                                    val createdTaskId = createdTaskJson.optString("id", "N/A")
-                                    quickTaskCreationStatus = "Задача '${taskType.titlePrefix}' (ID: $createdTaskId) создана! Запускаем таймер..."
-                                    Timber.i("Standard task '${taskType.titlePrefix}' (ID: $createdTaskId) created successfully. Response: $responseText")
-
-                                    val newlyCreatedTask = createTaskFromJson(createdTaskJson, createdTaskId)
-                                    toggleTimer(context, newlyCreatedTask)
-
-                                    delay(1500)
-                                    loadTasks()
-                                } else if (json.has("error")) {
-                                    val errorDesc = json.optString("error_description", "Неизвестная ошибка API")
-                                    quickTaskCreationStatus = "Ошибка API: $errorDesc"
-                                    Timber.w("API error creating standard task '${taskType.titlePrefix}': $errorDesc. Response: $responseText")
-                                } else {
-                                    quickTaskCreationStatus = "Неизвестный ответ от сервера."
-                                    Timber.w("Unknown response while creating standard task '${taskType.titlePrefix}'. Response: $responseText")
-                                }
-                            } catch (e: Exception) {
-                                quickTaskCreationStatus = "Ошибка обработки ответа: ${e.message}"
-                                Timber.e(e, "Parse error in create standard task response for '${taskType.titlePrefix}'")
-                            }
-                        } else {
-                            quickTaskCreationStatus = "Ошибка сервера: ${response.code}"
-                            Timber.e("HTTP error creating standard task '${taskType.titlePrefix}': ${response.code} - ${response.message}. Body: $responseText")
-                        }
-                        delay(3500)
-                        quickTaskCreationStatus = null
-                    }
-                }
-            })
         }
     }
 
@@ -1851,7 +1736,6 @@ fun LogViewerScreen(viewModel: MainViewModel) {
 @Composable
 fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var isSettingsExpanded by remember { mutableStateOf(false) }
-    var isQuickTaskDropdownExpanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
     if (viewModel.isLogViewerVisible) {
@@ -1904,123 +1788,60 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
 
                 Spacer(Modifier.weight(1f))
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (viewModel.quickTaskDisplayMode == MainViewModel.QuickTaskDisplayMode.ICONS) {
-                        MainViewModel.StandardTaskType.values().forEach { taskType ->
-                            IconButton(
-                                onClick = { viewModel.createStandardTask(taskType, context) },
-                                modifier = Modifier.size(56.dp)
-                            ) {
-                                Text(
-                                    text = taskType.emoji,
-                                    fontSize = 32.sp,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
-                    } else {
-                        Box {
-                            IconButton(
-                                onClick = { isQuickTaskDropdownExpanded = true },
-                                modifier = Modifier.size(56.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Add,
-                                    contentDescription = "Создать быструю задачу",
-                                    modifier = Modifier.size(32.dp)
-                                )
-                            }
-                            DropdownMenu(
-                                expanded = isQuickTaskDropdownExpanded,
-                                onDismissRequest = { isQuickTaskDropdownExpanded = false }
-                            ) {
-                                MainViewModel.StandardTaskType.values().forEach { taskType ->
-                                    DropdownMenuItem(
-                                        text = { Text("${taskType.emoji} ${taskType.titlePrefix}") },
-                                        onClick = {
-                                            viewModel.createStandardTask(taskType, context)
-                                            isQuickTaskDropdownExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
+                Box {
+                    IconButton(
+                        onClick = { isSettingsExpanded = true },
+                        modifier = Modifier.size(56.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Настройки",
+                            modifier = Modifier.size(32.dp)
+                        )
                     }
 
-                    Box {
-                        IconButton(
-                            onClick = { isSettingsExpanded = true },
-                            modifier = Modifier.size(56.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = "Настройки",
-                                modifier = Modifier.size(32.dp)
-                            )
-                        }
-
-                        DropdownMenu(
-                            expanded = isSettingsExpanded,
-                            onDismissRequest = { isSettingsExpanded = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = if (viewModel.showCompletedTasks) "✓ " else "   ",
-                                            color = MaterialTheme.colorScheme.primary,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text("Показывать завершенные")
-                                    }
-                                },
-                                onClick = {
-                                    viewModel.toggleShowCompletedTasks()
-                                    isSettingsExpanded = false
+                    DropdownMenu(
+                        expanded = isSettingsExpanded,
+                        onDismissRequest = { isSettingsExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = if (viewModel.showCompletedTasks) "✓ " else "   ",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text("Показывать завершенные")
                                 }
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = if (viewModel.quickTaskDisplayMode == MainViewModel.QuickTaskDisplayMode.DROPDOWN) "✓ " else "   ",
-                                            color = MaterialTheme.colorScheme.primary,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text("Быстрые задачи: список")
-                                    }
-                                },
-                                onClick = {
-                                    viewModel.toggleQuickTaskDisplayMode(context)
-                                    isSettingsExpanded = false
-                                }
-                            )
-                            Divider()
-                            DropdownMenuItem(
-                                text = { Text("Очистить кэш и перезагрузить") },
-                                onClick = {
-                                    viewModel.forceReloadTasks()
-                                    isSettingsExpanded = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Посмотреть логи") },
-                                onClick = {
-                                    viewModel.showLogViewer(context)
-                                    isSettingsExpanded = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Добавить пользователя") },
-                                onClick = {
-                                    viewModel.prepareAddUserDialog()
-                                    isSettingsExpanded = false
-                                }
-                            )
-                        }
+                            },
+                            onClick = {
+                                viewModel.toggleShowCompletedTasks()
+                                isSettingsExpanded = false
+                            }
+                        )
+                        Divider()
+                        DropdownMenuItem(
+                            text = { Text("Очистить кэш и перезагрузить") },
+                            onClick = {
+                                viewModel.forceReloadTasks()
+                                isSettingsExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Посмотреть логи") },
+                            onClick = {
+                                viewModel.showLogViewer(context)
+                                isSettingsExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Добавить пользователя") },
+                            onClick = {
+                                viewModel.prepareAddUserDialog()
+                                isSettingsExpanded = false
+                            }
+                        )
                     }
                 }
             }
@@ -2132,12 +1953,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            val taskCreationMessage = viewModel.quickTaskCreationStatus
             val textCommentMessage = viewModel.textCommentStatusMessage
             val deleteTaskMessage = viewModel.deleteTaskStatusMessage
             val pendingSyncMessage = viewModel.pendingSyncMessage
 
-            val generalMessageToDisplay = pendingSyncMessage ?: deleteTaskMessage ?: textCommentMessage ?: taskCreationMessage
+            val generalMessageToDisplay = pendingSyncMessage ?: deleteTaskMessage ?: textCommentMessage
             if (generalMessageToDisplay != null) {
                 val isGeneralError = viewModel.errorMessage != null ||
                                      generalMessageToDisplay.contains("Ошибка", ignoreCase = true) ||
