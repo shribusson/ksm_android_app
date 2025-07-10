@@ -16,6 +16,12 @@ import android.os.IBinder
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.animateColor
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -2120,29 +2126,28 @@ fun TaskCard(
             onLongClick = { onLongPress(task) }
         )
 
+    val isBlinkingTask = task.isImportant && task.isWaitingForControl
 
-    val cardContainerColor = remember(
-        task.isCompleted,
-        isTimerRunningForThisTask,
-        isTimerUserPausedForThisTask,
-        task.isOverdue,
-        task.isImportant,
-        task.isWaitingForControl,
-        scheme.surfaceVariant,
-        StatusGreen, StatusBlue, StatusYellow, StatusRed
-    ) {
-        val importantColor = Color(0xFFFFFBE6) // Светло-желтый для важных
-        val waitingForControlColor = Color(0xFFE6F7FF) // Светло-голубой для контроля
+    val infiniteTransition = rememberInfiniteTransition(label = "blinking_color_transition")
 
-        when {
-            isTimerRunningForThisTask -> StatusBlue
-            isTimerUserPausedForThisTask -> StatusYellow
-            task.isCompleted -> StatusGreen
-            task.isImportant -> importantColor
-            task.isWaitingForControl -> waitingForControlColor
-            task.isOverdue -> StatusRed
-            else -> scheme.surfaceVariant
-        }
+    val blinkingColor by infiniteTransition.animateColor(
+        initialValue = ProgressBarRed,
+        targetValue = ProgressBarRed.copy(alpha = 0.6f),
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "blinking_color"
+    )
+
+    val cardContainerColor = when {
+        isTimerRunningForThisTask -> StatusBlue
+        isTimerUserPausedForThisTask -> StatusYellow
+        task.isCompleted -> StatusGreen
+        isBlinkingTask -> blinkingColor
+        task.isImportant -> ProgressBarRed
+        task.isWaitingForControl -> ProgressBarOrange
+        else -> scheme.surfaceVariant
     }
 
     Card(
@@ -2228,13 +2233,10 @@ fun TaskCard(
                     fontSize = 14.sp,
                     color = scheme.onSurfaceVariant
                 )
-                val progressTextColor = remember(task.isOverdue, scheme.error, scheme.onSurfaceVariant) {
-                    if (task.isOverdue) scheme.error else scheme.onSurfaceVariant
-                }
                 Text(
                     text = "${task.progressPercent}%",
                     fontSize = 14.sp,
-                    color = progressTextColor
+                    color = scheme.onSurfaceVariant
                 )
             }
 
