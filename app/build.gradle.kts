@@ -65,6 +65,9 @@ dependencies {
     // WorkManager for offline sync
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
+    // Accompanist for FlowRow (Tags)
+    implementation("com.google.accompanist:accompanist-flowlayout:0.30.1")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
