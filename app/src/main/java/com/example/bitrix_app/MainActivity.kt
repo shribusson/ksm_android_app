@@ -544,64 +544,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val allRawTasks = mutableListOf<Task>()
                 var start = 0
-                val filterMillis = deadlineFilterDate
 
                 while (true) {
-                    val url = if (filterMillis != null) {
-                        val calendar = Calendar.getInstance().apply { timeInMillis = filterMillis }
-                        // ИЗМЕНЕНИЕ: Использовать формат даты, который точно понимает API Bitrix24
-                        val formatter = SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault())
-
-                        // Начало дня
-                        calendar.set(Calendar.HOUR_OF_DAY, 0)
-                        calendar.set(Calendar.MINUTE, 0)
-                        calendar.set(Calendar.SECOND, 0)
-                        val startDateStr = formatter.format(calendar.time)
-
-                        // Конец дня
-                        calendar.set(Calendar.HOUR_OF_DAY, 23)
-                        calendar.set(Calendar.MINUTE, 59)
-                        calendar.set(Calendar.SECOND, 59)
-                        val endDateStr = formatter.format(calendar.time)
-
-                        Timber.d("Filtering by deadline between $startDateStr and $endDateStr")
-
-                        "${user.webhookUrl}tasks.task.list" +
-                                "?filter[MEMBER]=${user.userId}" +
-                                "&filter[>=DEADLINE]=$startDateStr" +
-                                "&filter[<=DEADLINE]=$endDateStr" +
-                                "&select[]=ID" +
-                                "&select[]=TITLE" +
-                                "&select[]=DESCRIPTION" +
-                                "&select[]=TIME_SPENT_IN_LOGS" +
-                                "&select[]=TIME_ESTIMATE" +
-                                "&select[]=STATUS" +
-                                "&select[]=RESPONSIBLE_ID" +
-                                "&select[]=DEADLINE" +
-                                "&select[]=CHANGED_DATE" +
-                                "&select[]=PRIORITY" +
-                                "&select[]=TAGS" +
-                                "&start=$start"
-                    } else {
-                        val calendar = Calendar.getInstance()
-                        calendar.add(Calendar.MONTH, -1)
-                        val oneMonthAgoDate = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()).format(calendar.time)
-                        "${user.webhookUrl}tasks.task.list" +
-                                "?filter[MEMBER]=${user.userId}" +
-                                "&filter[>CHANGED_DATE]=$oneMonthAgoDate" +
-                                "&select[]=ID" +
-                                "&select[]=TITLE" +
-                                "&select[]=DESCRIPTION" +
-                                "&select[]=TIME_SPENT_IN_LOGS" +
-                                "&select[]=TIME_ESTIMATE" +
-                                "&select[]=STATUS" +
-                                "&select[]=RESPONSIBLE_ID" +
-                                "&select[]=DEADLINE" +
-                                "&select[]=CHANGED_DATE" +
-                                "&select[]=PRIORITY" +
-                                "&select[]=TAGS" +
-                                "&start=$start"
-                    }
+                    // Упрощенный URL, всегда загружает задачи, измененные за последний месяц
+                    val calendar = Calendar.getInstance()
+                    calendar.add(Calendar.MONTH, -1)
+                    val oneMonthAgoDate = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()).format(calendar.time)
+                    val url = "${user.webhookUrl}tasks.task.list" +
+                            "?filter[MEMBER]=${user.userId}" +
+                            "&filter[>CHANGED_DATE]=$oneMonthAgoDate" +
+                            "&select[]=ID" +
+                            "&select[]=TITLE" +
+                            "&select[]=DESCRIPTION" +
+                            "&select[]=TIME_SPENT_IN_LOGS" +
+                            "&select[]=TIME_ESTIMATE" +
+                            "&select[]=STATUS" +
+                            "&select[]=RESPONSIBLE_ID" +
+                            "&select[]=DEADLINE" +
+                            "&select[]=CHANGED_DATE" +
+                            "&select[]=PRIORITY" +
+                            "&select[]=TAGS" +
+                            "&start=$start"
 
                     Timber.d("Loading tasks page with URL: $url")
                     val request = Request.Builder().url(url).build()
@@ -657,19 +620,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Обработка полного списка задач
                 val output = withContext(Dispatchers.Default) {
-                    val filteredTasksList = allRawTasks.filter { task ->
-                        val keep = if (!task.isCompleted) {
-                            true
-                        } else {
-                            showCompletedTasks
-                        }
-                        if (!keep) {
-                            Timber.d("Task ${task.id} ('${task.title}') with status ${task.status} was filtered out (isCompleted: ${task.isCompleted}, showCompletedTasks: $showCompletedTasks).")
-                        }
-                        keep
-                    }
-                    Timber.d("Total raw tasks (last month): ${allRawTasks.size}, Filtered (showCompleted=$showCompletedTasks): ${filteredTasksList.size} for user ${user.name}")
+                    // 1. Фильтрация по дате (внутри приложения)
+                    val dateFilteredTasks = if (deadlineFilterDate != null) {
+                        val filterCalendar = Calendar.getInstance().apply { timeInMillis = deadlineFilterDate!! }
+                        val filterYear = filterCalendar.get(Calendar.YEAR)
+                        val filterDayOfYear = filterCalendar.get(Calendar.DAY_OF_YEAR)
 
+                        val parsers = listOf(
+                            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()),
+                            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()),
+                            SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                        )
+
+                        allRawTasks.filter { task ->
+                            task.deadline?.let { deadlineStr ->
+                                var taskDate: Date? = null
+                                for (parser in parsers) {
+                                    try {
+                                        taskDate = parser.parse(deadlineStr)
+                                        if (taskDate != null) break
+                                    } catch (e: Exception) { /* continue */ }
+                                }
+                                taskDate?.let {
+                                    val taskCalendar = Calendar.getInstance().apply { time = it }
+                                    taskCalendar.get(Calendar.YEAR) == filterYear && taskCalendar.get(Calendar.DAY_OF_YEAR) == filterDayOfYear
+                                } ?: false
+                            } ?: false
+                        }
+                    } else {
+                        allRawTasks
+                    }
+
+                    // 2. Фильтрация по завершенным задачам
+                    val completionFilteredTasks = dateFilteredTasks.filter { task ->
+                        if (!task.isCompleted) true else showCompletedTasks
+                    }
+
+                    Timber.d("Total raw tasks: ${allRawTasks.size}, After date filter: ${dateFilteredTasks.size}, After completion filter: ${completionFilteredTasks.size}")
+
+                    // 3. Сортировка
                     val dateParsers = listOf(
                         SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()),
                         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
@@ -677,7 +666,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val deadlineDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
                     val simpleDeadlineDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
-                    val newSortedTasksList = filteredTasksList.sortedWith(
+                    val newSortedTasksList = completionFilteredTasks.sortedWith(
                         compareBy<Task> { it.isCompleted }
                             .thenBy { task ->
                                 task.deadline?.takeIf { it.isNotBlank() }?.let { deadlineStr ->
