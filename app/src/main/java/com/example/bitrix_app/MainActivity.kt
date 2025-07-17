@@ -2,6 +2,7 @@ package com.example.bitrix_app
 
 import android.app.Application
 import android.app.AlarmManager
+import android.app.DatePickerDialog
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -33,6 +34,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack // Для кнопки "Назад"
 import androidx.compose.material.icons.filled.Check // Для галочки завершения
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.ExpandLess // Для иконки "свернуть"
 import androidx.compose.material.icons.filled.ExpandMore // Для иконки "развернуть"
 // import androidx.compose.material.icons.filled.Mic // Удалено
@@ -292,6 +295,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var newUserAvatar by mutableStateOf("")
     var newUserSupervisorId by mutableStateOf("")
 
+    // --- Состояние для фильтра по дате ---
+    var deadlineFilterDate by mutableStateOf<Long?>(null)
+        private set
+
 
     // --- Управление SharedPreferences ---
     private val sharedPreferencesName = "BitrixAppPrefs"
@@ -438,6 +445,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     // --- Конец управления пользователями ---
 
+    fun setDeadlineFilter(dateMillis: Long?) {
+        deadlineFilterDate = dateMillis
+        loadTasks()
+    }
+
     fun forceReloadTasks() {
         if (users.isEmpty()) return
         Timber.i("Force reloading tasks for user: ${users.getOrNull(currentUserIndex)?.name}")
@@ -532,26 +544,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val allRawTasks = mutableListOf<Task>()
                 var start = 0
-                val calendar = Calendar.getInstance()
-                calendar.add(Calendar.MONTH, -1) // Получаем дату месяц назад
-                val oneMonthAgoDate = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()).format(calendar.time)
+                val filterMillis = deadlineFilterDate
 
                 while (true) {
-                    val url = "${user.webhookUrl}tasks.task.list" +
-                            "?filter[MEMBER]=${user.userId}" +
-                            "&filter[>CHANGED_DATE]=$oneMonthAgoDate" + // Фильтр по дате изменения
-                            "&select[]=ID" +
-                            "&select[]=TITLE" +
-                            "&select[]=DESCRIPTION" +
-                            "&select[]=TIME_SPENT_IN_LOGS" +
-                            "&select[]=TIME_ESTIMATE" +
-                            "&select[]=STATUS" +
-                            "&select[]=RESPONSIBLE_ID" +
-                            "&select[]=DEADLINE" +
-                            "&select[]=CHANGED_DATE" +
-                            "&select[]=PRIORITY" +
-                            "&select[]=TAGS" +
-                            "&start=$start" // Параметр пагинации
+                    val url = if (filterMillis != null) {
+                        val calendar = Calendar.getInstance().apply { timeInMillis = filterMillis }
+                        // Формат для Bitrix API, включающий часовой пояс
+                        val formatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+
+                        // Начало дня
+                        calendar.set(Calendar.HOUR_OF_DAY, 0)
+                        calendar.set(Calendar.MINUTE, 0)
+                        calendar.set(Calendar.SECOND, 0)
+                        val startDateStr = formatter.format(calendar.time)
+
+                        // Конец дня
+                        calendar.set(Calendar.HOUR_OF_DAY, 23)
+                        calendar.set(Calendar.MINUTE, 59)
+                        calendar.set(Calendar.SECOND, 59)
+                        val endDateStr = formatter.format(calendar.time)
+
+                        Timber.d("Filtering by deadline between $startDateStr and $endDateStr")
+
+                        "${user.webhookUrl}tasks.task.list" +
+                                "?filter[MEMBER]=${user.userId}" +
+                                "&filter[>=DEADLINE]=$startDateStr" +
+                                "&filter[<=DEADLINE]=$endDateStr" +
+                                "&select[]=ID" +
+                                "&select[]=TITLE" +
+                                "&select[]=DESCRIPTION" +
+                                "&select[]=TIME_SPENT_IN_LOGS" +
+                                "&select[]=TIME_ESTIMATE" +
+                                "&select[]=STATUS" +
+                                "&select[]=RESPONSIBLE_ID" +
+                                "&select[]=DEADLINE" +
+                                "&select[]=CHANGED_DATE" +
+                                "&select[]=PRIORITY" +
+                                "&select[]=TAGS" +
+                                "&start=$start"
+                    } else {
+                        val calendar = Calendar.getInstance()
+                        calendar.add(Calendar.MONTH, -1)
+                        val oneMonthAgoDate = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()).format(calendar.time)
+                        "${user.webhookUrl}tasks.task.list" +
+                                "?filter[MEMBER]=${user.userId}" +
+                                "&filter[>CHANGED_DATE]=$oneMonthAgoDate" +
+                                "&select[]=ID" +
+                                "&select[]=TITLE" +
+                                "&select[]=DESCRIPTION" +
+                                "&select[]=TIME_SPENT_IN_LOGS" +
+                                "&select[]=TIME_ESTIMATE" +
+                                "&select[]=STATUS" +
+                                "&select[]=RESPONSIBLE_ID" +
+                                "&select[]=DEADLINE" +
+                                "&select[]=CHANGED_DATE" +
+                                "&select[]=PRIORITY" +
+                                "&select[]=TAGS" +
+                                "&start=$start"
+                    }
 
                     Timber.d("Loading tasks page with URL: $url")
                     val request = Request.Builder().url(url).build()
@@ -663,8 +713,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     errorMessage = null
 
                     if (output.processedTasks.isEmpty() && tasks.isEmpty()) {
-                        Timber.w("No displayable tasks for user ${user.name} after filtering. Total raw tasks for last month: ${output.rawTaskCount}")
-                        if (output.rawTaskCount > 0) {
+                        Timber.w("No displayable tasks for user ${user.name} after filtering. Total raw tasks for this filter: ${output.rawTaskCount}")
+                        if (deadlineFilterDate != null) {
+                            val formatter = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+                            val formattedDate = formatter.format(Date(deadlineFilterDate!!))
+                            errorMessage = "Задачи с крайним сроком на $formattedDate не найдены."
+                        } else if (output.rawTaskCount > 0) {
                             errorMessage = "Задачи за последний месяц найдены, но отфильтрованы. Попробуйте изменить настройки отображения."
                         } else {
                             errorMessage = "Активные задачи за последний месяц не найдены."
@@ -1744,6 +1798,26 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var isSettingsExpanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
+    // --- Date Picker Dialog Logic ---
+    val calendar = Calendar.getInstance()
+    viewModel.deadlineFilterDate?.let {
+        calendar.timeInMillis = it
+    }
+    val year = calendar.get(Calendar.YEAR)
+    val month = calendar.get(Calendar.MONTH)
+    val day = calendar.get(Calendar.DAY_OF_MONTH)
+
+    val datePickerDialog = DatePickerDialog(
+        context,
+        { _, selectedYear, selectedMonth, selectedDay ->
+            val newCalendar = Calendar.getInstance().apply {
+                set(selectedYear, selectedMonth, selectedDay)
+            }
+            viewModel.setDeadlineFilter(newCalendar.timeInMillis)
+        }, year, month, day
+    )
+    // --- End Date Picker Dialog Logic ---
+
     if (viewModel.isLogViewerVisible) {
         LogViewerScreen(viewModel = viewModel)
     } else {
@@ -1794,60 +1868,104 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
 
                 Spacer(Modifier.weight(1f))
 
-                Box {
+                Row(
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val deadlineFilter = viewModel.deadlineFilterDate
+                    if (deadlineFilter != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.secondaryContainer, CircleShape)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            val formatter = remember { SimpleDateFormat("dd.MM.yy", Locale.getDefault()) }
+                            Text(
+                                text = formatter.format(Date(deadlineFilter)),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            IconButton(
+                                onClick = { viewModel.setDeadlineFilter(null) },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Сбросить фильтр по дате",
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+
                     IconButton(
-                        onClick = { isSettingsExpanded = true },
+                        onClick = { datePickerDialog.show() },
                         modifier = Modifier.size(56.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Настройки",
+                            imageVector = Icons.Default.DateRange,
+                            contentDescription = "Фильтр по дате",
                             modifier = Modifier.size(32.dp)
                         )
                     }
 
-                    DropdownMenu(
-                        expanded = isSettingsExpanded,
-                        onDismissRequest = { isSettingsExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = if (viewModel.showCompletedTasks) "✓ " else "   ",
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text("Показывать завершенные")
+                    Box {
+                        IconButton(
+                            onClick = { isSettingsExpanded = true },
+                            modifier = Modifier.size(56.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Настройки",
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = isSettingsExpanded,
+                            onDismissRequest = { isSettingsExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = if (viewModel.showCompletedTasks) "✓ " else "   ",
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text("Показывать завершенные")
+                                    }
+                                },
+                                onClick = {
+                                    viewModel.toggleShowCompletedTasks()
+                                    isSettingsExpanded = false
                                 }
-                            },
-                            onClick = {
-                                viewModel.toggleShowCompletedTasks()
-                                isSettingsExpanded = false
-                            }
-                        )
-                        Divider()
-                        DropdownMenuItem(
-                            text = { Text("Очистить кэш и перезагрузить") },
-                            onClick = {
-                                viewModel.forceReloadTasks()
-                                isSettingsExpanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Посмотреть логи") },
-                            onClick = {
-                                viewModel.showLogViewer(context)
-                                isSettingsExpanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Добавить пользователя") },
-                            onClick = {
-                                viewModel.prepareAddUserDialog()
-                                isSettingsExpanded = false
-                            }
-                        )
+                            )
+                            Divider()
+                            DropdownMenuItem(
+                                text = { Text("Очистить кэш и перезагрузить") },
+                                onClick = {
+                                    viewModel.forceReloadTasks()
+                                    isSettingsExpanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Посмотреть логи") },
+                                onClick = {
+                                    viewModel.showLogViewer(context)
+                                    isSettingsExpanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Добавить пользователя") },
+                                onClick = {
+                                    viewModel.prepareAddUserDialog()
+                                    isSettingsExpanded = false
+                                }
+                            )
+                        }
                     }
                 }
             }
