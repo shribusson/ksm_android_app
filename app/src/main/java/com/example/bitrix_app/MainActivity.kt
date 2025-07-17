@@ -549,8 +549,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 while (true) {
                     val url = if (filterMillis != null) {
                         val calendar = Calendar.getInstance().apply { timeInMillis = filterMillis }
-                        // Формат для Bitrix API, включающий часовой пояс
-                        val formatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+                        // ИЗМЕНЕНИЕ: Использовать формат даты, который точно понимает API Bitrix24
+                        val formatter = SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault())
 
                         // Начало дня
                         calendar.set(Calendar.HOUR_OF_DAY, 0)
