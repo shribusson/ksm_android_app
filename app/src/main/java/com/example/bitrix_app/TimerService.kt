@@ -24,6 +24,7 @@ data class TimerServiceState(
     val activeTaskId: String? = null,
     val activeTaskTitle: String? = null,
     val timerSeconds: Int = 0,
+    val initialSeconds: Int = 0,
     val isUserPaused: Boolean = false
 ) {
     val isEffectivelyPaused: Boolean
@@ -125,7 +126,8 @@ class TimerService : Service() {
             userName = userName,
             activeTaskId = taskId,
             activeTaskTitle = taskTitle,
-            timerSeconds = initialSeconds, // Используем initialSeconds
+            timerSeconds = initialSeconds, 
+            initialSeconds = initialSeconds, // Store initial
             isUserPaused = false
         )
         _allUserStates.value = _allUserStates.value + (userId to newState)
@@ -138,13 +140,18 @@ class TimerService : Service() {
 
     fun stopTaskTimer(userId: String): Int {
         val userState = _allUserStates.value[userId] ?: return 0
-        val currentTime = userState.timerSeconds
-        Timber.i("Service: Stopping timer for task '${userState.activeTaskTitle}' for user ${userState.userName}. Final time: $currentTime seconds.")
+        val currentTotalTime = userState.timerSeconds
+        val initialTime = userState.initialSeconds
+        val deltaSeconds = if (currentTotalTime >= initialTime) currentTotalTime - initialTime else 0
+        
+        Timber.i("Service: Stopping timer for task '${userState.activeTaskTitle}' for user ${userState.userName}. Total: $currentTotalTime, Initial: $initialTime, Delta: $deltaSeconds.")
+        
         val newState = userState.copy(
             activeTaskId = null,
             activeTaskTitle = null,
-            isUserPaused = false
-            // timerSeconds остается для ViewModel, чтобы забрать его при необходимости (хотя stopTaskTimer возвращает его)
+            isUserPaused = false,
+            initialSeconds = 0 // Reset
+            // timerSeconds remains for UI if needed, but we returned delta
         )
         _allUserStates.value = _allUserStates.value + (userId to newState)
         if (userId == currentUiUserId) {
@@ -152,7 +159,7 @@ class TimerService : Service() {
         }
         stopTimerJob(userId)
         updateNotification()
-        return currentTime
+        return deltaSeconds
     }
 
     fun userPauseTaskTimer(userId: String) {

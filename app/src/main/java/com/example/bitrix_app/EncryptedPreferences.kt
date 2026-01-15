@@ -46,4 +46,12 @@ class EncryptedPreferences(context: Context) {
     fun getDefaultGroupId(): String {
         return sharedPreferences.getString("default_group_id", "69") ?: "69"
     }
+
+    fun saveUsersJson(json: String) {
+        sharedPreferences.edit().putString("users_list_json", json).apply()
+    }
+
+    fun getUsersJson(): String? {
+        return sharedPreferences.getString("users_list_json", null)
+    }
 }

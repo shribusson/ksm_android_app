@@ -1,7 +1,5 @@
 package com.example.bitrix_app.data.repository
 
-import com.example.bitrix_app.domain.model.Task
-import com.example.bitrix_app.data.local.BitrixDatabase
 import com.example.bitrix_app.data.local.dao.SyncQueueDao
 import com.example.bitrix_app.data.local.dao.TaskDao
 import com.example.bitrix_app.data.local.entity.SyncQueueEntity
@@ -9,6 +7,9 @@ import com.example.bitrix_app.data.local.entity.SyncStatus
 import com.example.bitrix_app.data.local.entity.TaskEntity
 import com.example.bitrix_app.data.local.mapper.toDomain
 import com.example.bitrix_app.data.local.mapper.toEntity
+import com.example.bitrix_app.data.remote.BitrixApi
+import com.example.bitrix_app.domain.model.ChecklistItem
+import com.example.bitrix_app.domain.model.Task
 import com.example.bitrix_app.domain.repository.TaskRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -19,31 +20,21 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import okhttp3.FormBody
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONArray
-import org.json.JSONObject
 import timber.log.Timber
 import java.io.IOException
+import javax.inject.Inject
 
 /**
- * Implementation TaskRepository с offline-first архитектурой.
- *
- * Ключевые принципы:
- * 1. Room DB - единственный источник правды (Single Source of Truth)
- * 2. Optimistic updates - UI обновляется моментально, sync в фоне
- * 3. Graceful degradation - offline режим прозрачен для пользователя
- * 4. Sync queue с retry - все failed операции сохраняются и retry автоматически
+ * Implementation TaskRepository with offline-first architecture.
  */
-class TaskRepositoryImpl(
+class TaskRepositoryImpl @Inject constructor(
     private val taskDao: TaskDao,
     private val syncQueueDao: SyncQueueDao,
-    private val httpClient: OkHttpClient
+    private val bitrixApi: BitrixApi,
+    private val json: Json
 ) : TaskRepository {
 
-    private val mutex = Mutex()  // Thread-safe operations
-    private val json = Json { ignoreUnknownKeys = true }
+    private val mutex = Mutex()
 
     override fun observeTasks(userId: String): Flow<List<Task>> {
         return taskDao.observeTasksByUser(userId)
@@ -63,22 +54,46 @@ class TaskRepositoryImpl(
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 try {
+                    android.util.Log.d("BITRIX_REPO", "Refreshing tasks for user $userId from $webhookUrl")
                     Timber.d("Refreshing tasks for user $userId from server")
 
                     // 1. Fetch from API
-                    val remoteTasks = fetchTasksFromApi(webhookUrl, userId)
+                    // Sort by REAL_STATUS ASC (Active first) then DEADLINE ASC (Urgent first), then ID DESC
+                    val params = mapOf(
+                        "filter[RESPONSIBLE_ID]" to userId,
+                        "order[REAL_STATUS]" to "asc", 
+                        "order[DEADLINE]" to "asc",
+                        "order[ID]" to "desc"
+                    )
+                    
+                    val response = bitrixApi.getTasks(
+                        url = "${webhookUrl}tasks.task.list",
+                        params = params
+                    )
+                    
+                    val taskDtos = response.result?.tasks ?: emptyList()
+                    if (response.error != null) {
+                         Timber.e("API Error in getTasks: ${response.error}")
+                    }
+                    // android.util.Log.d("BITRIX_REPO", "Received ${taskDtos.size} tasks from API")
 
-                    // 2. Update DB (single source of truth)
+                    // 2. Filter out tasks with null IDs (invalid data)
+                    val validTasks = taskDtos.filter { it.id != null }
+                    if (validTasks.size < taskDtos.size) {
+                        android.util.Log.e("BITRIX_REPO", "Filtered out ${taskDtos.size - validTasks.size} tasks with null IDs")
+                    }
+
+                    // 3. Update DB (single source of truth)
+                    val taskEntities = validTasks.map { it.toEntity(userId) }
+                    
                     taskDao.deleteAllForUser(userId)
-                    taskDao.insertAll(remoteTasks.map { it.toEntity() })
+                    taskDao.insertAll(taskEntities)
 
-                    Timber.i("Successfully refreshed ${remoteTasks.size} tasks for user $userId")
+                    android.util.Log.d("BITRIX_REPO", "Successfully refreshed ${taskEntities.size} tasks for user $userId")
+                    Timber.i("Successfully refreshed ${taskEntities.size} tasks for user $userId")
                     Result.success(Unit)
-                } catch (e: IOException) {
-                    Timber.e(e, "Network error refreshing tasks, using cached data")
-                    // Don't fail - we have cached data in DB
-                    Result.failure(e)
                 } catch (e: Exception) {
+                    android.util.Log.e("BITRIX_REPO", "Error refreshing tasks", e)
                     Timber.e(e, "Error refreshing tasks")
                     Result.failure(e)
                 }
@@ -88,7 +103,6 @@ class TaskRepositoryImpl(
     override suspend fun updateTimeSpent(taskId: String, seconds: Int): Result<Unit> =
         withContext(Dispatchers.IO) {
             try {
-                // Optimistic update to DB
                 val currentTask = taskDao.getTaskById(taskId)
                 if (currentTask != null) {
                     val newTimeSpent = currentTask.timeSpent + seconds
@@ -106,7 +120,6 @@ class TaskRepositoryImpl(
         withContext(Dispatchers.IO) {
             try {
                 taskDao.updateStatus(taskId, newStatus)
-                Timber.d("Updated status for task $taskId: $newStatus")
                 Result.success(Unit)
             } catch (e: Exception) {
                 Timber.e(e, "Failed to update task status")
@@ -121,44 +134,48 @@ class TaskRepositoryImpl(
         seconds: Int,
         comment: String
     ): Result<Unit> = withContext(Dispatchers.IO) {
+        android.util.Log.d("BITRIX_REPO", "saveTaskTime called for taskId=$taskId, seconds=$seconds")
         try {
-            Timber.d("Saving task time: taskId=$taskId, seconds=$seconds")
-
-            // 1. Optimistic update to DB
             updateTimeSpent(taskId, seconds)
 
-            // 2. Try immediate sync
-            val syncResult = trySyncTaskTime(webhookUrl, taskId, seconds, comment, userId)
+            val apiResult = try {
+                 bitrixApi.addElapsedTime(
+                    url = "${webhookUrl}task.elapseditem.add",
+                    taskId = taskId,
+                    seconds = seconds,
+                    comment = comment,
+                    userId = userId
+                )
+                Result.success(Unit)
+            } catch (e: Exception) {
+                android.util.Log.e("BITRIX_REPO", "API Failed for saveTaskTime", e)
+                Result.failure(e)
+            }
 
-            if (syncResult.isSuccess) {
-                Timber.i("Task time saved successfully to server")
-                taskDao.updateSyncStatus(taskId, "SYNCED", System.currentTimeMillis())
+            if (apiResult.isSuccess) {
+                android.util.Log.d("BITRIX_REPO", "API Success for saveTaskTime")
+                taskDao.updateSyncStatus(taskId, SyncStatus.SYNCED, System.currentTimeMillis())
                 return@withContext Result.success(Unit)
             }
 
-            // 3. Queue for later if sync failed
-            Timber.w("Sync failed, queueing operation for retry")
+            android.util.Log.d("BITRIX_REPO", "Enqueuing sync for TIME_SAVE")
             enqueueSyncOperation(
                 operationType = "TIME_SAVE",
                 taskId = taskId,
                 userId = userId,
                 payload = json.encodeToString(TimeSavePayload(webhookUrl, seconds, comment))
             )
-
-            taskDao.updateSyncStatus(taskId, "PENDING", System.currentTimeMillis())
-            Result.success(Unit)  // Success from user perspective
+            taskDao.updateSyncStatus(taskId, SyncStatus.PENDING, System.currentTimeMillis())
+            Result.success(Unit)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to save task time")
-
-            // Queue for later
+            android.util.Log.e("BITRIX_REPO", "Exception in saveTaskTime, enqueuing.", e)
             enqueueSyncOperation(
                 operationType = "TIME_SAVE",
                 taskId = taskId,
                 userId = userId,
                 payload = json.encodeToString(TimeSavePayload(webhookUrl, seconds, comment))
             )
-
-            Result.success(Unit)  // Don't fail UI
+            Result.success(Unit)
         }
     }
 
@@ -168,37 +185,42 @@ class TaskRepositoryImpl(
         webhookUrl: String,
         comment: String
     ): Result<Unit> = withContext(Dispatchers.IO) {
+        android.util.Log.d("BITRIX_REPO", "addComment called for taskId=$taskId")
         try {
-            Timber.d("Adding comment to task $taskId")
-
-            // Try immediate sync
-            val syncResult = trySyncComment(webhookUrl, taskId, comment, userId)
-
-            if (syncResult.isSuccess) {
-                Timber.i("Comment added successfully to server")
-                return@withContext Result.success(Unit)
+            val apiResult = try {
+                bitrixApi.addComment(
+                    url = "${webhookUrl}task.commentitem.add",
+                    taskId = taskId,
+                    comment = comment,
+                    userId = userId
+                )
+                Result.success(Unit)
+            } catch (e: Exception) {
+                 android.util.Log.e("BITRIX_REPO", "API Failed for addComment", e)
+                 Result.failure(e)
             }
 
-            // Queue for later if sync failed
-            Timber.w("Sync failed, queueing comment for retry")
+            if (apiResult.isSuccess) {
+                android.util.Log.d("BITRIX_REPO", "API Success for addComment")
+                return@withContext Result.success(Unit)
+            }
+            
+            android.util.Log.d("BITRIX_REPO", "Enqueuing sync for COMMENT_ADD")
             enqueueSyncOperation(
                 operationType = "COMMENT_ADD",
                 taskId = taskId,
                 userId = userId,
                 payload = json.encodeToString(CommentPayload(webhookUrl, comment))
             )
-
             Result.success(Unit)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to add comment")
-
+            android.util.Log.e("BITRIX_REPO", "Exception in addComment, enqueuing.", e)
             enqueueSyncOperation(
                 operationType = "COMMENT_ADD",
                 taskId = taskId,
                 userId = userId,
                 payload = json.encodeToString(CommentPayload(webhookUrl, comment))
             )
-
             Result.success(Unit)
         }
     }
@@ -208,61 +230,58 @@ class TaskRepositoryImpl(
         userId: String,
         webhookUrl: String
     ): Result<Unit> = withContext(Dispatchers.IO) {
+        android.util.Log.d("BITRIX_REPO", "completeTask called for taskId=$taskId")
         try {
-            Timber.d("Completing task $taskId")
+            taskDao.updateStatus(taskId, "5") // 5 = Closed/Completed
 
-            // 1. Optimistic update to DB
-            taskDao.updateStatus(taskId, "Завершена")
+            val apiResult = try {
+                bitrixApi.completeTask(url = "${webhookUrl}tasks.task.complete", taskId = taskId)
+                Result.success(Unit)
+            } catch (e: Exception) {
+                android.util.Log.e("BITRIX_REPO", "API Failed for completeTask", e)
+                Result.failure(e)
+            }
 
-            // 2. Try immediate sync
-            val syncResult = trySyncCompleteTask(webhookUrl, taskId)
-
-            if (syncResult.isSuccess) {
-                Timber.i("Task completed successfully on server")
-                taskDao.updateSyncStatus(taskId, "SYNCED", System.currentTimeMillis())
+            if (apiResult.isSuccess) {
+                android.util.Log.d("BITRIX_REPO", "API Success for completeTask")
+                taskDao.updateSyncStatus(taskId, SyncStatus.SYNCED, System.currentTimeMillis())
                 return@withContext Result.success(Unit)
             }
 
-            // 3. Queue for later if sync failed
-            Timber.w("Sync failed, queueing task completion for retry")
+            android.util.Log.d("BITRIX_REPO", "Enqueuing sync for TASK_COMPLETE")
             enqueueSyncOperation(
                 operationType = "TASK_COMPLETE",
                 taskId = taskId,
                 userId = userId,
                 payload = json.encodeToString(TaskCompletePayload(webhookUrl))
             )
-
-            taskDao.updateSyncStatus(taskId, "PENDING", System.currentTimeMillis())
+            taskDao.updateSyncStatus(taskId, SyncStatus.PENDING, System.currentTimeMillis())
             Result.success(Unit)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to complete task")
-
+            android.util.Log.e("BITRIX_REPO", "Exception in completeTask, enqueuing.", e)
             enqueueSyncOperation(
-                operationType = "TASK_COMPLETE",
+                 operationType = "TASK_COMPLETE",
                 taskId = taskId,
                 userId = userId,
                 payload = json.encodeToString(TaskCompletePayload(webhookUrl))
             )
-
             Result.success(Unit)
         }
     }
 
     override suspend fun deleteAllForUser(userId: String) = withContext(Dispatchers.IO) {
         taskDao.deleteAllForUser(userId)
-        Timber.i("Deleted all tasks for user $userId")
     }
 
     override suspend fun getPendingSyncCount(): Int = withContext(Dispatchers.IO) {
         syncQueueDao.getPendingCount()
     }
 
-    override suspend fun getSyncQueueStatistics(): List<com.example.bitrix_app.data.local.dao.SyncStatusStatistic> = withContext(Dispatchers.IO) {
+    override suspend fun getSyncQueueStatistics() = withContext(Dispatchers.IO) {
         syncQueueDao.getStatusStatistics()
     }
 
     override suspend fun syncPendingOperations(): Result<Unit> = withContext(Dispatchers.IO) {
-        // Получаем операции, которые ожидают синхронизации или готовы к повторной попытке
         val pendingOps = syncQueueDao.getPendingOperationsReadyForRetry() 
         var failCount = 0
 
@@ -270,20 +289,24 @@ class TaskRepositoryImpl(
             return@withContext Result.success(Unit)
         }
 
-        Timber.d("Starting sync of ${pendingOps.size} pending operations")
+        android.util.Log.e("BITRIX_REPO", "Syncing ${pendingOps.size} pending operations")
 
         for (op in pendingOps) {
             try {
+                android.util.Log.d("BITRIX_REPO", "Processing op ${op.id}: ${op.operationType} for task ${op.taskId}")
                 val result = processOperation(op)
                 if (result.isSuccess) {
-                    syncQueueDao.updateStatus(op.id, SyncStatus.COMPLETED)
-                    Timber.d("Operation ${op.id} (${op.operationType}) synced successfully")
+                    // DELETE the operation instead of marking COMPLETED to prevent re-execution
+                    syncQueueDao.deleteById(op.id)
+                    android.util.Log.d("BITRIX_REPO", "Op ${op.id} SUCCESS - DELETED from queue")
                 } else {
                     val errorMsg = result.exceptionOrNull()?.message
+                    android.util.Log.e("BITRIX_REPO", "Op ${op.id} FAILED: $errorMsg")
                     handleSyncFailure(op, errorMsg)
                     failCount++
                 }
             } catch (e: Exception) {
+                android.util.Log.e("BITRIX_REPO", "Op ${op.id} EXCEPTION", e)
                 handleSyncFailure(op, e.message)
                 failCount++
             }
@@ -301,12 +324,19 @@ class TaskRepositoryImpl(
         userId: String,
         webhookUrl: String,
         estimateMinutes: Int,
-        groupId: String
+        groupId: String,
+        deadline: Long?
     ): Result<Unit> = withContext(Dispatchers.IO) {
         val tempTaskId = "temp_${System.currentTimeMillis()}"
         val currentTime = System.currentTimeMillis()
+        
+        // Format deadline for API if present
+        val deadlineStr = deadline?.let {
+             // Bitrix usually accepts ISO 8601 or d.M.yyyy H:m:s
+             // Use ISO
+             java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", java.util.Locale.getDefault()).format(java.util.Date(it))
+        }
 
-        // 1. Create local entity for immediate UI update
         val newTaskEntity = TaskEntity(
             id = tempTaskId,
             userId = userId,
@@ -314,8 +344,8 @@ class TaskRepositoryImpl(
             description = "",
             timeSpent = 0,
             timeEstimate = estimateMinutes * 60,
-            status = "2", // Pending/New
-            deadline = null,
+            status = "2",
+            deadline = deadlineStr,
             changedDate = null,
             tags = "",
             isImportant = false,
@@ -325,14 +355,23 @@ class TaskRepositoryImpl(
         )
 
         try {
-            // 2. Insert locally first
             taskDao.insertAll(listOf(newTaskEntity))
 
-            // 3. Try immediate sync
-            val result = trySyncCreateTask(webhookUrl, title, userId, estimateMinutes, groupId)
+            val apiResult = try {
+                bitrixApi.createTask(
+                    url = "${webhookUrl}tasks.task.add",
+                    title = title,
+                    responsibleId = userId,
+                    timeEstimate = estimateMinutes * 60,
+                    groupId = groupId,
+                    deadline = deadlineStr
+                )
+                Result.success(Unit)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
 
-            if (result.isFailure) {
-                // Queue for later
+            if (apiResult.isFailure) {
                 enqueueSyncOperation(
                     operationType = "TASK_CREATE",
                     taskId = tempTaskId,
@@ -340,42 +379,200 @@ class TaskRepositoryImpl(
                     payload = json.encodeToString(TaskCreatePayload(webhookUrl, title, userId, estimateMinutes, groupId))
                 )
             } else {
-                // If success, mark as SYNCED so refreshTasks will replace it with real task from server
-                taskDao.updateSyncStatus(tempTaskId, "SYNCED", System.currentTimeMillis())
+                taskDao.updateSyncStatus(tempTaskId, SyncStatus.SYNCED, System.currentTimeMillis())
             }
-
             Result.success(Unit)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to create task")
-            // Ensure queued if exception
             enqueueSyncOperation(
                 operationType = "TASK_CREATE",
                 taskId = tempTaskId,
                 userId = userId,
                 payload = json.encodeToString(TaskCreatePayload(webhookUrl, title, userId, estimateMinutes, groupId))
             )
-            // Return success to UI so dialog closes and task appears
             Result.success(Unit)
         }
     }
+
+    override suspend fun deleteTask(taskId: String, userId: String, webhookUrl: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val response = try {
+                bitrixApi.deleteTask(url = "${webhookUrl}tasks.task.delete", taskId = taskId)
+            } catch (e: Exception) {
+                null // Network error captured later
+                // Actually if exception, we treat as RETRYABLE (null response)
+                // We'll handle it below
+                throw e
+            }
+
+            // Check for explicit API error
+            if (response.error != null) {
+                if (response.error == "ACCESS_DENIED" || response.error_description?.contains("Access denied", true) == true) {
+                     Timber.e("Access Denied deleting task $taskId: ${response.error}")
+                     return@withContext Result.failure(Exception("ACCESS_DENIED"))
+                     // EXIT without deleting locally
+                }
+                // Other API errors (e.g. not found) -> maybe delete?
+                // If "Task not found", we should delete locally to clean up.
+                if (response.error == "TASK_NOT_FOUND" || response.error == "TASK_NOT_FOUND_OR_NOT_ACCESSIBLE") {
+                     taskDao.deleteById(taskId)
+                     return@withContext Result.success(Unit)
+                }
+                
+                // Unknown API error: Retry via sync?
+                Result.failure(Exception(response.error))
+            } else {
+                 // Success
+                 taskDao.deleteById(taskId)
+                 return@withContext Result.success(Unit)
+            }
+        } catch (e: Exception) {
+             // Exception (Network etc) -> Queue for Sync and Delete Locally (Optimistic)
+             // But wait, if it was Access Denied inside try block? We handled it.
+             // This catch is for Network exceptions.
+             
+            enqueueSyncOperation(
+                operationType = "TASK_DELETE",
+                taskId = taskId,
+                userId = userId,
+                payload = json.encodeToString(TaskDeletePayload(webhookUrl))
+            )
+            taskDao.deleteById(taskId) 
+            
+            Result.success(Unit)
+        }
+    }
+
+    override suspend fun fetchChecklist(taskId: String, webhookUrl: String): Result<List<ChecklistItem>> = withContext(Dispatchers.IO) {
+        try {
+            val response = bitrixApi.getTaskChecklist(url = "${webhookUrl}task.checklistitem.getlist", taskId = taskId)
+            val items = response.result?.map { 
+                ChecklistItem(
+                    id = it.id,
+                    title = it.title,
+                    isComplete = it.isComplete == "Y"
+                )
+            } ?: emptyList()
+            Result.success(items)
+        } catch (e: Exception) {
+            Timber.e(e, "Error fetching checklist")
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun toggleChecklistItem(taskId: String, itemId: String, action: String, webhookUrl: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val urlAction = if (action == "renew") "task.checklistitem.renew" else "task.checklistitem.complete"
+            
+            val apiResult = try {
+                 if (action == "renew") {
+                     bitrixApi.renewChecklistItem(url = "${webhookUrl}task.checklistitem.renew", taskId = taskId, itemId = itemId)
+                 } else {
+                     bitrixApi.completeChecklistItem(url = "${webhookUrl}task.checklistitem.complete", taskId = taskId, itemId = itemId)
+                 }
+                 Result.success(Unit)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+
+            if (apiResult.isSuccess) {
+                return@withContext Result.success(Unit)
+            }
+
+            // Sync logic
+            enqueueSyncOperation(
+                operationType = "CHECKLIST_TOGGLE",
+                taskId = taskId,
+                userId = "0", // UserId might not be strictly needed for checklist toggle if webhook has auth context
+                payload = json.encodeToString(ChecklistTogglePayload(webhookUrl, itemId, action))
+            )
+            Result.success(Unit)
+        } catch (e: Exception) {
+             enqueueSyncOperation(
+                operationType = "CHECKLIST_TOGGLE",
+                taskId = taskId,
+                userId = "0",
+                payload = json.encodeToString(ChecklistTogglePayload(webhookUrl, itemId, action))
+            )
+            Result.success(Unit)
+        }
+    }
+
+    override suspend fun getGroups(webhookUrl: String): Result<List<Pair<String, String>>> = withContext(Dispatchers.IO) {
+        try {
+            val response = bitrixApi.getGroups(url = "${webhookUrl}sonet_group.get.json")
+            val groups = response.result?.map { it.id to it.name } ?: emptyList()
+            Result.success(groups)
+        } catch (e: Exception) {
+             Timber.e(e, "Error fetching groups")
+             Result.failure(e)
+        }
+    }
+
 
     private suspend fun processOperation(op: SyncQueueEntity): Result<Unit> {
         return when (op.operationType) {
             "TIME_SAVE" -> {
                 val payload = json.decodeFromString<TimeSavePayload>(op.payload)
-                trySyncTaskTime(payload.webhookUrl, op.taskId, payload.seconds, payload.comment, op.userId)
+                try {
+                    bitrixApi.addElapsedTime(
+                        url = "${payload.webhookUrl}task.elapseditem.add",
+                        taskId = op.taskId,
+                        seconds = payload.seconds,
+                        comment = payload.comment,
+                        userId = op.userId
+                    )
+                    Result.success(Unit)
+                } catch(e: Exception) { Result.failure(e) }
             }
             "COMMENT_ADD" -> {
                 val payload = json.decodeFromString<CommentPayload>(op.payload)
-                trySyncComment(payload.webhookUrl, op.taskId, payload.comment, op.userId)
+                try {
+                    bitrixApi.addComment(
+                        url = "${payload.webhookUrl}task.commentitem.add",
+                        taskId = op.taskId,
+                        comment = payload.comment,
+                        userId = op.userId
+                    )
+                    Result.success(Unit)
+                } catch(e: Exception) { Result.failure(e) }
             }
             "TASK_COMPLETE" -> {
                 val payload = json.decodeFromString<TaskCompletePayload>(op.payload)
-                trySyncCompleteTask(payload.webhookUrl, op.taskId)
+                try {
+                    bitrixApi.completeTask(url = "${payload.webhookUrl}tasks.task.complete", taskId = op.taskId)
+                    Result.success(Unit)
+                } catch(e: Exception) { Result.failure(e) }
             }
             "TASK_CREATE" -> {
-                val payload = json.decodeFromString<TaskCreatePayload>(op.payload)
-                trySyncCreateTask(payload.webhookUrl, payload.title, payload.userId, payload.estimateMinutes, payload.groupId)
+                 val payload = json.decodeFromString<TaskCreatePayload>(op.payload)
+                 try {
+                     bitrixApi.createTask(
+                         url = "${payload.webhookUrl}tasks.task.add",
+                         title = payload.title,
+                         responsibleId = payload.userId,
+                         timeEstimate = payload.estimateMinutes * 60,
+                         groupId = payload.groupId
+                     )
+                     Result.success(Unit)
+                 } catch(e: Exception) { Result.failure(e) }
+            }
+            "TASK_DELETE" -> {
+                val payload = json.decodeFromString<TaskDeletePayload>(op.payload)
+                try {
+                    bitrixApi.deleteTask(url = "${payload.webhookUrl}tasks.task.delete", taskId = op.taskId)
+                    Result.success(Unit)
+                } catch(e: Exception) { Result.failure(e) }
+            }
+            "CHECKLIST_TOGGLE" -> {
+                val payload = json.decodeFromString<ChecklistTogglePayload>(op.payload)
+                try {
+                    if (payload.action == "renew") {
+                        bitrixApi.renewChecklistItem(url = "${payload.webhookUrl}task.checklistitem.renew", taskId = op.taskId, itemId = payload.itemId)
+                    } else {
+                        bitrixApi.completeChecklistItem(url = "${payload.webhookUrl}task.checklistitem.complete", taskId = op.taskId, itemId = payload.itemId)
+                    }
+                    Result.success(Unit)
+                } catch(e: Exception) { Result.failure(e) }
             }
             else -> Result.failure(Exception("Unknown operation type: ${op.operationType}"))
         }
@@ -383,226 +580,15 @@ class TaskRepositoryImpl(
 
     private suspend fun handleSyncFailure(op: SyncQueueEntity, error: String?) {
         val newRetryCount = op.retryCount + 1
-        Timber.w("Sync failed for op ${op.id}. Retry $newRetryCount/${op.maxRetries}. Error: $error")
-
         if (newRetryCount >= op.maxRetries) {
             syncQueueDao.updateStatusWithError(op.id, SyncStatus.FAILED, error)
         } else {
-            // Exponential backoff: 1s, 2s, 4s, 8s...
             val delay = 1000L * (1 shl newRetryCount)
             val currentTime = System.currentTimeMillis()
             syncQueueDao.updateForRetry(op.id, newRetryCount, currentTime, currentTime + delay, error)
         }
     }
 
-    // ========== Private Helper Methods ==========
-
-    /**
-     * Fetch tasks from Bitrix24 API
-     */
-    private fun fetchTasksFromApi(webhookUrl: String, userId: String): List<Task> {
-        val safeWebhookUrl = if (webhookUrl.endsWith("/")) webhookUrl else "$webhookUrl/"
-        val url = "${safeWebhookUrl}tasks.task.list"
-        
-        val tasksList = mutableListOf<JSONObject>()
-        var start = 0
-        
-        while (true) {
-            Timber.d("Fetching tasks page starting at $start")
-            val formBody = FormBody.Builder()
-                .add("filter[RESPONSIBLE_ID]", userId)
-                // Removed filter[!STATUS]=5 to include completed tasks
-                .add("start", start.toString())
-                .build()
-
-            val request = Request.Builder()
-                .url(url)
-                .post(formBody)
-                .build()
-
-            val response = httpClient.newCall(request).execute()
-
-            if (!response.isSuccessful) {
-                val errorBody = response.body?.string()
-                Timber.e("Failed to fetch tasks. HTTP ${response.code}: ${response.message}. Body: $errorBody")
-                throw IOException("HTTP ${response.code}: ${response.message}")
-            }
-
-            val responseBody = response.body?.string() ?: throw IOException("Empty response body")
-            val jsonResponse = JSONObject(responseBody)
-
-            if (jsonResponse.has("error")) {
-                val errorDescription = jsonResponse.getString("error_description")
-                throw IOException("API error: $errorDescription")
-            }
-
-            val result = jsonResponse.get("result")
-            var itemsInPage = 0
-
-            when (result) {
-                is JSONObject -> {
-                    if (result.has("tasks")) {
-                        val tasksArray = result.getJSONArray("tasks")
-                        itemsInPage = tasksArray.length()
-                        for (i in 0 until tasksArray.length()) {
-                            tasksList.add(tasksArray.getJSONObject(i))
-                        }
-                    } else {
-                        val keys = result.keys()
-                        while (keys.hasNext()) {
-                            val obj = result.optJSONObject(keys.next())
-                            if (obj != null) {
-                                tasksList.add(obj)
-                                itemsInPage++
-                            }
-                        }
-                    }
-                }
-                is JSONArray -> {
-                    itemsInPage = result.length()
-                    for (i in 0 until result.length()) {
-                        tasksList.add(result.getJSONObject(i))
-                    }
-                }
-            }
-            
-            if (jsonResponse.has("next")) {
-                start = jsonResponse.getInt("next")
-            } else {
-                break
-            }
-        }
-
-        val currentTime = System.currentTimeMillis()
-
-        return tasksList.map { taskJson ->
-            Task(
-                id = taskJson.optString("id", taskJson.optString("ID")),
-                userId = userId,  // Add userId
-                title = taskJson.optString("title", taskJson.optString("TITLE", "Без названия")),
-                description = taskJson.optString("description", taskJson.optString("DESCRIPTION", "")),
-                timeSpent = taskJson.optInt("timeSpentInLogs", taskJson.optInt("TIME_SPENT_IN_LOGS", 0)),
-                timeEstimate = taskJson.optInt("timeEstimate", taskJson.optInt("TIME_ESTIMATE", 0)),
-                deadline = taskJson.optString("deadline", taskJson.optString("DEADLINE", null)),
-                status = taskJson.optString("status", taskJson.optString("STATUS", "2")), // Default to "In Progress"
-                tags = emptyList(),  // Parse from API if needed
-                isImportant = taskJson.optString("priority", taskJson.optString("PRIORITY")) == "2",
-                syncStatus = "SYNCED",
-                createdAt = currentTime,
-                updatedAt = currentTime
-            )
-        }
-    }
-
-    /**
-     * Try to sync task time to server
-     */
-    private fun trySyncTaskTime(
-        webhookUrl: String,
-        taskId: String,
-        seconds: Int,
-        comment: String,
-        userId: String
-    ): Result<Unit> {
-        return try {
-            val url = "${webhookUrl}task.elapseditem.add.json"
-
-            val requestBody = FormBody.Builder()
-                .add("taskId", taskId)
-                .add("arFields[SECONDS]", seconds.toString())
-                .add("arFields[COMMENT_TEXT]", comment)
-                .add("arFields[USER_ID]", userId)
-                .build()
-
-            val request = Request.Builder()
-                .url(url)
-                .post(requestBody)
-                .build()
-
-            val response = httpClient.newCall(request).execute()
-
-            if (response.isSuccessful) {
-                Result.success(Unit)
-            } else {
-                Result.failure(IOException("HTTP ${response.code}"))
-            }
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to sync task time")
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * Try to sync comment to server
-     */
-    private fun trySyncComment(
-        webhookUrl: String,
-        taskId: String,
-        comment: String,
-        userId: String
-    ): Result<Unit> {
-        return try {
-            val url = "${webhookUrl}task.commentitem.add.json"
-
-            val requestBody = FormBody.Builder()
-                .add("taskId", taskId)
-                .add("fields[POST_MESSAGE]", comment)
-                .add("fields[AUTHOR_ID]", userId)
-                .build()
-
-            val request = Request.Builder()
-                .url(url)
-                .post(requestBody)
-                .build()
-
-            val response = httpClient.newCall(request).execute()
-
-            if (response.isSuccessful) {
-                Result.success(Unit)
-            } else {
-                Result.failure(IOException("HTTP ${response.code}"))
-            }
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to sync comment")
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * Try to sync task completion to server
-     */
-    private fun trySyncCompleteTask(
-        webhookUrl: String,
-        taskId: String
-    ): Result<Unit> {
-        return try {
-            val url = "${webhookUrl}tasks.task.complete.json"
-
-            val requestBody = FormBody.Builder()
-                .add("taskId", taskId)
-                .build()
-
-            val request = Request.Builder()
-                .url(url)
-                .post(requestBody)
-                .build()
-
-            val response = httpClient.newCall(request).execute()
-
-            if (response.isSuccessful) {
-                Result.success(Unit)
-            } else {
-                Result.failure(IOException("HTTP ${response.code}"))
-            }
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to sync task completion")
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * Enqueue sync operation for later retry
-     */
     private suspend fun enqueueSyncOperation(
         operationType: String,
         taskId: String,
@@ -614,24 +600,17 @@ class TaskRepositoryImpl(
             taskId = taskId,
             userId = userId,
             payload = payload,
-            status = "PENDING",
+            status = SyncStatus.PENDING,
             retryCount = 0,
             maxRetries = 5,
             lastAttemptAt = null,
-            nextRetryAt = System.currentTimeMillis(),  // Immediate retry
+            nextRetryAt = System.currentTimeMillis(),
             errorMessage = null,
             createdAt = System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis()
         )
-
         syncQueueDao.insert(operation)
-        Timber.d("Enqueued sync operation: $operationType for task $taskId")
-
-        // TODO: Trigger WorkManager to process queue
-        // WorkManager.getInstance(context).enqueue(SyncQueueWorker.createWorkRequest())
     }
-
-    // ========== Payload Data Classes ==========
 
     @Serializable
     private data class TimeSavePayload(
@@ -660,35 +639,20 @@ class TaskRepositoryImpl(
         val groupId: String
     )
 
-    private suspend fun trySyncCreateTask(
-        webhookUrl: String,
-        title: String,
-        userId: String,
-        estimateMinutes: Int,
-        groupId: String
-    ): Result<Unit> = withContext(Dispatchers.IO) {
-        try {
-            val request = Request.Builder()
-                .url("${webhookUrl}tasks.task.add")
-                .post(FormBody.Builder()
-                    .add("fields[TITLE]", title)
-                    .add("fields[RESPONSIBLE_ID]", userId)
-                    .add("fields[TIME_ESTIMATE]", (estimateMinutes * 60).toString())
-                    .add("fields[GROUP_ID]", groupId)
-                    .build())
-                .build()
+    @Serializable
+    private data class TaskDeletePayload(
+        val webhookUrl: String
+    )
 
-            val response = httpClient.newCall(request).execute()
+    @Serializable
+    private data class ChecklistTogglePayload(
+        val webhookUrl: String,
+        val itemId: String,
+        val action: String
+    )
 
-            if (response.isSuccessful) {
-                Timber.i("Task created: $title")
-                Result.success(Unit)
-            } else {
-                Result.failure(IOException("HTTP ${response.code}"))
-            }
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to create task")
-            Result.failure(e)
-        }
+    override suspend fun clearAllSyncQueue(): Unit = withContext(Dispatchers.IO) {
+        val deleted = syncQueueDao.deleteAll()
+        android.util.Log.e("BITRIX_REPO", "Cleared $deleted sync queue entries")
     }
 }

@@ -1,5 +1,8 @@
 package com.example.bitrix_app.domain.model
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 data class User(
     val userId: String,
     val name: String,

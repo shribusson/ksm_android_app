@@ -24,6 +24,9 @@ interface TaskDao {
     @Query("DELETE FROM tasks WHERE userId = :userId")
     fun deleteAllForUser(userId: String)
 
+    @Query("DELETE FROM tasks WHERE id = :taskId")
+    fun deleteById(taskId: String)
+
     @Query("UPDATE tasks SET timeSpent = :newTimeSpent WHERE id = :taskId")
     fun updateTimeSpent(taskId: String, newTimeSpent: Int)
 

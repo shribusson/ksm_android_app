@@ -24,4 +24,5 @@ object SyncStatus {
     const val PENDING = "PENDING"
     const val COMPLETED = "COMPLETED"
     const val FAILED = "FAILED"
+    const val SYNCED = "SYNCED"
 }

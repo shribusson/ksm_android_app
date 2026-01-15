@@ -30,4 +30,16 @@ interface SyncQueueDao {
 
     @Query("UPDATE sync_queue SET retryCount = :retryCount, lastAttemptAt = :lastAttempt, nextRetryAt = :nextRetry, errorMessage = :error WHERE id = :id")
     fun updateForRetry(id: Long, retryCount: Int, lastAttempt: Long, nextRetry: Long, error: String?)
+
+    @Query("DELETE FROM sync_queue WHERE id = :id")
+    fun deleteById(id: Long)
+
+    @Query("DELETE FROM sync_queue WHERE status = 'COMPLETED'")
+    fun deleteCompleted(): Int
+
+    @Query("DELETE FROM sync_queue WHERE status = 'FAILED' AND retryCount >= maxRetries")
+    fun deleteFailedExhausted(): Int
+
+    @Query("DELETE FROM sync_queue")
+    fun deleteAll(): Int
 }

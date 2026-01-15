@@ -1,21 +1,31 @@
 #!/bin/bash
+# Icon generator using sips (Bash 3.2 compatible)
+BASE_ICON="/Users/void/StudioProjects/bitrix_app_android/icon.png"
+RES_DIR="/Users/void/StudioProjects/bitrix_app_android/app/src/main/res"
 
-# Скрипт для автоматической замены иконки приложения
-# Исходный файл: icon.png в корне проекта
-
-if [ ! -f "icon.png" ]; then
-    echo "Ошибка: файл icon.png не найден в корне проекта."
+if [ ! -f "$BASE_ICON" ]; then
+    echo "Error: icon.png not found at $BASE_ICON"
     exit 1
 fi
 
-# Удаляем адаптивные иконки (XML), чтобы принудительно использовать PNG
-rm -rf app/src/main/res/mipmap-anydpi-v26
+# Function to generate icons
+generate_icon() {
+    local folder=$1
+    local size=$2
+    local target_dir="$RES_DIR/$folder"
+    
+    mkdir -p "$target_dir"
+    echo "Generating $size x $size to $folder"
+    
+    sips -z $size $size "$BASE_ICON" --out "$target_dir/ic_launcher.png"
+    sips -z $size $size "$BASE_ICON" --out "$target_dir/ic_launcher_round.png"
+    sips -z $size $size "$BASE_ICON" --out "$target_dir/ic_launcher_foreground.png"
+}
 
-# Копируем icon.png во все папки mipmap как ic_launcher.png и ic_launcher_round.png
-for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-    mkdir -p "app/src/main/res/mipmap-$density"
-    cp "icon.png" "app/src/main/res/mipmap-$density/ic_launcher.png"
-    cp "icon.png" "app/src/main/res/mipmap-$density/ic_launcher_round.png"
-done
+generate_icon "mipmap-mdpi" 48
+generate_icon "mipmap-hdpi" 72
+generate_icon "mipmap-xhdpi" 96
+generate_icon "mipmap-xxhdpi" 144
+generate_icon "mipmap-xxxhdpi" 192
 
-echo "✅ Иконка приложения обновлена из icon.png"
+echo "Icons generated."
