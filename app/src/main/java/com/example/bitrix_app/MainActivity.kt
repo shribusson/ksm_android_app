@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.Settings // Для иконки н
 import androidx.compose.material.icons.filled.Share // Для кнопки "Поделиться"
 import androidx.compose.material.icons.filled.Stop // Для иконки остановки записи
 import androidx.compose.material.icons.filled.Delete // Для иконки удаления
+import androidx.compose.material.icons.filled.CloudOff // Для индикатора офлайн
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -80,6 +81,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.room.Room
 import androidx.work.*
 import com.example.bitrix_app.ui.theme.* // Импортируем все из пакета темы
 import timber.log.Timber
@@ -88,6 +90,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.Dispatchers // Добавляем импорт
 import kotlinx.coroutines.withContext // Добавляем импорт
+import kotlinx.coroutines.Job
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -96,10 +99,18 @@ import org.json.JSONException // Добавляем этот импорт
 import org.json.JSONObject
 import java.io.IOException
 import java.util.*
+import com.example.bitrix_app.data.local.BitrixDatabase
+import com.example.bitrix_app.data.repository.TaskRepositoryImpl
+import com.example.bitrix_app.domain.repository.TaskRepository
+import com.example.bitrix_app.data.local.preferences.EncryptedPreferences
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import java.text.SimpleDateFormat // Добавим для formatDeadline
 import java.nio.charset.StandardCharsets
+
+import com.example.bitrix_app.domain.model.Task
+import com.example.bitrix_app.domain.model.User
+import com.example.bitrix_app.domain.model.ChecklistItem
 
 // Вспомогательная функция для форматирования крайнего срока
 fun formatDeadline(deadlineStr: String?): String? {
@@ -126,83 +137,24 @@ fun formatDeadline(deadlineStr: String?): String? {
     return deadlineStr // Вернуть оригинальную строку, если все попытки парсинга не удались
 }
 
-// Модели данных
-data class User(
-    val name: String,
-    val webhookUrl: String,
-    val userId: String,
-    val avatar: String,
-    val supervisorId: String? = null // ID руководителя
-)
-
-data class Task(
-    val id: String,
-    val title: String,
-    val description: String,
-    val timeSpent: Int,
-    val timeEstimate: Int,
-    val status: String = "",
-    val deadline: String? = null, // Крайний срок задачи
-    val changedDate: String? = null, // Добавлено поле для даты изменения
-    val tags: List<String> = emptyList(), // Список тегов
-    val isImportant: Boolean = false      // Признак важной задачи
-) {
-    val progressPercent: Int get() = if (timeEstimate > 0) (timeSpent * 100 / timeEstimate) else 0
-    val isOverdue: Boolean get() = progressPercent > 100
-    val isCompleted: Boolean get() = status == "5" // 5 = Завершена
-    val isInProgress: Boolean get() = status == "2" // 2 = В работе
-    val isPending: Boolean get() = status == "3" // 3 = Ждет выполнения
-    val isWaitingForControl: Boolean get() = status == "4" // Ждет контроля (статус 4)
-
-    // statusText больше не используется в TaskCard в текущей конфигурации, но оставим на случай будущего использования
-    val statusText: String get() = when (status) {
-        "1" -> "Новая"
-        "2" -> "В работе"
-        "3" -> "Ждет выполнения"
-        "4" -> "Предположительно завершена"
-        "5" -> "Завершена"
-        "6" -> "Отложена"
-        "7" -> "Отклонена"
-        else -> "Неизвестный статус"
-    }
-
-    val formattedTime: String get() {
-        val spentHours = timeSpent / 3600
-        val spentMinutes = (timeSpent % 3600) / 60
-        val estimateHours = timeEstimate / 3600
-        val estimateMinutes = (timeEstimate % 3600) / 60
-        return String.format("%d:%02d / %d:%02d", spentHours, spentMinutes, estimateHours, estimateMinutes)
-    }
-}
-
-// WorkStatus enum удален
-
-data class ChecklistItem(
-    val id: String,
-    val title: String,
-    val isComplete: Boolean
-)
-
-// Data class AttachedFile удален, так как функционал файлов вырезан
-
-// Enum AppThemeOptions удален, так как тема будет фиксированной
-
 // ViewModel
 
-// Вспомогательный data class для результата обработки задач в фоновом потоке
-data class TaskProcessingOutput(
-    val processedTasks: List<Task>,
-    val rawTaskCount: Int, // Для определения необходимости fallback
-    val processingError: String? = null // Ошибка, возникшая во время обработки
-)
-
-// TimemanApiStatus enum удален
-
-class MainViewModel(application: Application) : AndroidViewModel(application) {
-    private val client = OkHttpClient()
+class MainViewModel(
+    application: Application,
+    private val repository: TaskRepository,
+    private val encryptedPrefs: EncryptedPreferences
+) : AndroidViewModel(application) {
+    
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .build()
 
     // Пользователи теперь управляются через MutableState и SharedPreferences
     var users by mutableStateOf<List<User>>(emptyList())
+        private set
+
+    var isOnline by mutableStateOf(true)
         private set
 
     var currentUserIndex by mutableStateOf(0)
@@ -289,16 +241,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var showRemoveUserDialogFor by mutableStateOf<User?>(null)
         private set
-    var newUserName by mutableStateOf("")
-    var newUserWebhookUrl by mutableStateOf("")
-    var newUserId by mutableStateOf("")
-    var newUserAvatar by mutableStateOf("")
-    var newUserSupervisorId by mutableStateOf("")
-
     // --- Состояние для фильтра по дате ---
     var deadlineFilterDate by mutableStateOf<Long?>(null)
         private set
 
+    // --- Состояния для Master Webhook Setup ---
+    var setupStep by mutableStateOf(0) // 0: Webhook Input, 1: User Selection
+    var loadedUsersFromPortal by mutableStateOf<List<User>>(emptyList())
+    var isPortalLoading by mutableStateOf(false)
+    var adminWebhookInput by mutableStateOf("https://bitrix.tooksm.kz/rest/1/wj819u83f2ht207z/")
+    
+    // --- Состояния для выбора группы ---
+    var showGroupSelectionDialog by mutableStateOf(false)
+    var availableGroups by mutableStateOf<List<Pair<String, String>>>(emptyList()) // ID, Name
+    var defaultGroupId by mutableStateOf("69")
+
+    // --- Состояния для создания задачи ---
+    var showCreateTaskDialog by mutableStateOf(false)
+    var isCreatingTask by mutableStateOf(false)
+
+    private var observeTasksJob: Job? = null
 
     // --- Управление SharedPreferences ---
     private val sharedPreferencesName = "BitrixAppPrefs"
@@ -364,11 +326,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (loadedUsers.isEmpty()) {
             Timber.w("No users in SharedPreferences or parsing failed. Loading default users.")
             // Return default users if nothing is loaded
-            return listOf(
-                User("Денис Мелков", "https://bitrix.tooksm.kz/rest/320/r8n6popybs2d7fmt/", "320", "ДМ", supervisorId = "253"),
-                User("Владислав Малай", "https://bitrix.tooksm.kz/rest/321/cyoaxf04bwt9sbqg/", "321", "ВМ", supervisorId = "253"),
-                User("Ким Филби", "https://bitrix.tooksm.kz/rest/253/gh1cy18ml0zn065x/", "253", "КФ", supervisorId = null)
-            )
+            return emptyList()
         }
         return loadedUsers
     }
@@ -376,11 +334,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Управление пользователями ---
     fun prepareAddUserDialog() {
-        newUserName = ""
-        newUserWebhookUrl = ""
-        newUserId = ""
-        newUserAvatar = ""
-        newUserSupervisorId = ""
+        setupStep = 0
+        adminWebhookInput = "https://bitrix.tooksm.kz/rest/1/wj819u83f2ht207z/"
+        loadedUsersFromPortal = emptyList()
+        errorMessage = null
         showAddUserDialog = true
     }
 
@@ -388,23 +345,101 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         showAddUserDialog = false
     }
 
-    fun addUser(context: Context) {
-        if (newUserName.isBlank() || newUserWebhookUrl.isBlank() || newUserId.isBlank() || newUserAvatar.isBlank()) {
-            errorMessage = "Все поля, кроме ID руководителя, должны быть заполнены."
+    // Шаг 1: Загрузка пользователей через Master Webhook
+    fun loadUsersFromPortal() {
+        if (adminWebhookInput.isBlank()) {
+            errorMessage = "Введите URL вебхука"
             return
         }
-        val newUser = User(
-            name = newUserName.trim(),
-            webhookUrl = newUserWebhookUrl.trim(),
-            userId = newUserId.trim(),
-            avatar = newUserAvatar.trim(),
-            supervisorId = newUserSupervisorId.trim().takeIf { it.isNotBlank() }
-        )
-        val updatedUsers = users + newUser
+        val webhook = adminWebhookInput.trim()
+        if (!webhook.startsWith("http")) {
+            errorMessage = "Некорректный URL"
+            return
+        }
+
+        isPortalLoading = true
+        errorMessage = null
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val safeUrl = if (webhook.endsWith("/")) webhook else "$webhook/"
+                val url = "${safeUrl}user.get.json"
+                val loaded = mutableListOf<User>()
+                var start = 0
+                var hasNext = true
+                
+                while (hasNext) {
+                    val request = Request.Builder()
+                        .url(url)
+                        .post(FormBody.Builder()
+                            .add("filter[ACTIVE]", "true")
+                            .add("start", start.toString())
+                            .build())
+                        .build()
+                    
+                    val response = client.newCall(request).execute()
+                    val body = response.body?.string() ?: "{}"
+                    val json = JSONObject(body)
+                    
+                    if (json.has("result")) {
+                        val result = json.getJSONArray("result")
+                        for (i in 0 until result.length()) {
+                            val u = result.getJSONObject(i)
+                            val name = "${u.optString("NAME")} ${u.optString("LAST_NAME")}".trim()
+                            val id = u.getString("ID")
+                            val initials = name.split(" ").mapNotNull { it.firstOrNull() }.take(2).joinToString("")
+                            
+                            loaded.add(User(
+                                name = name,
+                                webhookUrl = webhook,
+                                userId = id,
+                                avatar = initials.ifBlank { "U" },
+                                supervisorId = null
+                            ))
+                        }
+                        if (json.has("next")) {
+                            start = json.getInt("next")
+                        } else {
+                            hasNext = false
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            errorMessage = "Ошибка API: ${json.optString("error_description")}"
+                        }
+                        return@launch
+                    }
+                }
+                
+                withContext(Dispatchers.Main) {
+                    loadedUsersFromPortal = loaded
+                    setupStep = 1
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    errorMessage = "Ошибка сети: ${e.message}"
+                }
+            } finally {
+                withContext(Dispatchers.Main) { isPortalLoading = false }
+            }
+        }
+    }
+
+    // Шаг 2: Выбор пользователя
+    fun selectUserFromPortal(user: User, context: Context) {
+        if (users.any { it.userId == user.userId }) {
+            errorMessage = "Пользователь уже добавлен"
+            return
+        }
+        
+        val updatedUsers = users + user
         users = updatedUsers
         saveUsers(context, updatedUsers)
         dismissAddUserDialog()
-        Timber.i("Added new user: ${newUser.name}")
+        
+        switchUser(users.lastIndex, context)
+    }
+
+    fun addUser(context: Context) {
     }
 
     fun requestRemoveUser(user: User) {
@@ -447,7 +482,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setDeadlineFilter(dateMillis: Long?) {
         deadlineFilterDate = dateMillis
-        loadTasks()
+        refreshTasks()
     }
 
     fun forceReloadTasks() {
@@ -459,7 +494,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         checklistsMap = emptyMap()
         errorMessage = null
         // Trigger reload
-        loadTasks()
+        refreshTasks()
     }
 
     fun connectToTimerService(service: TimerService?) {
@@ -498,12 +533,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         users = loadUsers(context)
         currentUserIndex = loadCurrentUserIndex(context) // Загружаем сохраненный индекс
         if (users.isNotEmpty()) {
-            loadTasks()
+            observeTasks()
+            refreshTasks()
             val currentUserForInit = users[currentUserIndex]
             timerService?.setCurrentUser(currentUserForInit.userId, currentUserForInit.name) // Уведомляем сервис, если он уже подключен
         }
-        startPeriodicTaskUpdates()
+        startNetworkMonitoring()
         isInitialized = true
+        defaultGroupId = encryptedPrefs.getDefaultGroupId()
         Timber.d("MainViewModel initialized. Current user: ${users.getOrNull(currentUserIndex)?.name}")
     }
     private var isInitialized = false
@@ -525,306 +562,160 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val switchedUser = users[index]
         timerService?.setCurrentUser(switchedUser.userId, switchedUser.name) // Уведомляем сервис о смене пользователя
 
-        loadTasks() // Загружаем задачи для нового пользователя
+        observeTasks()
+        refreshTasks()
     }
 
-    fun loadTasks() {
+    private fun startNetworkMonitoring() {
+        viewModelScope.launch {
+            while (true) {
+                isOnline = isNetworkAvailable()
+                delay(1000)
+            }
+        }
+    }
+
+    private fun observeTasks() {
+        val user = users.getOrNull(currentUserIndex) ?: return
+        
+        observeTasksJob?.cancel()
+        observeTasksJob = viewModelScope.launch {
+            repository.observeTasks(user.userId).collect { dbTasks ->
+                processAndSetTasks(dbTasks)
+            }
+        }
+    }
+
+    fun refreshTasks() {
         if (users.isEmpty()) {
             isLoading = false
-            errorMessage = "Нет пользователей для загрузки задач."
             tasks = emptyList()
             return
         }
         val user = users[currentUserIndex]
-        Timber.d("loadTasks called for user: ${user.name}")
         isLoading = true
         errorMessage = null
 
         viewModelScope.launch {
+            val result = repository.refreshTasks(user.userId, user.webhookUrl)
+            isLoading = false
+            repository.syncPendingOperations()
+        }
+    }
+
+    // --- Управление группами ---
+    fun openGroupSelectionDialog() {
+        val user = users.getOrNull(currentUserIndex)
+        if (user == null) {
+            errorMessage = "Сначала выберите пользователя"
+            return
+        }
+        
+        showGroupSelectionDialog = true
+        isLoading = true
+        
+        viewModelScope.launch(Dispatchers.IO) {
             try {
-                val allRawTasks = mutableListOf<Task>()
-                var start = 0
-
-                while (true) {
-                    // Упрощенный URL, всегда загружает задачи, измененные за последний месяц
-                    val calendar = Calendar.getInstance()
-                    calendar.add(Calendar.MONTH, -1)
-                    val oneMonthAgoDate = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()).format(calendar.time)
-                    val url = "${user.webhookUrl}tasks.task.list" +
-                            "?filter[MEMBER]=${user.userId}" +
-                            "&filter[>CHANGED_DATE]=$oneMonthAgoDate" +
-                            "&select[]=ID" +
-                            "&select[]=TITLE" +
-                            "&select[]=DESCRIPTION" +
-                            "&select[]=TIME_SPENT_IN_LOGS" +
-                            "&select[]=TIME_ESTIMATE" +
-                            "&select[]=STATUS" +
-                            "&select[]=RESPONSIBLE_ID" +
-                            "&select[]=DEADLINE" +
-                            "&select[]=CHANGED_DATE" +
-                            "&select[]=PRIORITY" +
-                            "&select[]=TAGS" +
-                            "&start=$start"
-
-                    Timber.d("Loading tasks page with URL: $url")
-                    val request = Request.Builder().url(url).build()
-
-                    val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }
-
-                    if (response.isSuccessful) {
-                        val responseText = response.body?.string()
-                        if (responseText.isNullOrEmpty()) {
-                            Timber.w("Empty response body for page at start=$start")
-                            break
-                        }
-                        Timber.i("Bitrix Response for page at start=$start: $responseText")
-                        val json = JSONObject(responseText)
-
-                        if (json.has("error")) {
-                            val error = json.getJSONObject("error")
-                            val apiErrorMessage = "Ошибка API: ${error.optString("error_description", "Неизвестная ошибка")}"
-                            Timber.w("API error in loadTasks (page $start): $apiErrorMessage")
-                            errorMessage = apiErrorMessage
-                            break
-                        }
-
-                        val tasksOnPage = mutableListOf<Task>()
-                        if (json.has("result")) {
-                            val result = json.get("result")
-                            when (result) {
-                                is JSONObject -> {
-                                    if (result.has("tasks")) {
-                                        processTasks(result.get("tasks"), tasksOnPage)
-                                    } else {
-                                        processTasks(result, tasksOnPage)
-                                    }
-                                }
-                                is JSONArray -> processTasks(result, tasksOnPage)
-                            }
-                        }
-                        allRawTasks.addAll(tasksOnPage)
-
-                        if (json.has("next")) {
-                            start = json.getInt("next")
-                            Timber.d("Pagination: More tasks available. Next page starts at: $start")
-                        } else {
-                            Timber.d("Pagination: All pages loaded. Total raw tasks fetched: ${allRawTasks.size}")
-                            break // Больше страниц нет
-                        }
-                    } else {
-                        errorMessage = "Ошибка сервера: ${response.code} - ${response.message}"
-                        Timber.e("HTTP error in loadTasks: ${response.code} - ${response.message}")
-                        break // Прерываем при ошибке
+                val url = "${user.webhookUrl}sonet_group.get.json"
+                val request = Request.Builder().url(url).build()
+                val response = client.newCall(request).execute()
+                val body = response.body?.string() ?: "{}"
+                val json = JSONObject(body)
+                
+                val groups = mutableListOf<Pair<String, String>>()
+                if (json.has("result")) {
+                    val result = json.getJSONArray("result")
+                    for (i in 0 until result.length()) {
+                        val g = result.getJSONObject(i)
+                        groups.add(g.getString("ID") to g.getString("NAME"))
                     }
                 }
-
-                // Обработка полного списка задач
-                val output = withContext(Dispatchers.Default) {
-                    // 1. Фильтрация по дате (внутри приложения)
-                    val dateFilteredTasks = if (deadlineFilterDate != null) {
-                        val filterCalendar = Calendar.getInstance().apply { timeInMillis = deadlineFilterDate!! }
-                        val filterYear = filterCalendar.get(Calendar.YEAR)
-                        val filterDayOfYear = filterCalendar.get(Calendar.DAY_OF_YEAR)
-
-                        val parsers = listOf(
-                            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()),
-                            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()),
-                            SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                        )
-
-                        allRawTasks.filter { task ->
-                            task.deadline?.let { deadlineStr ->
-                                var taskDate: Date? = null
-                                for (parser in parsers) {
-                                    try {
-                                        taskDate = parser.parse(deadlineStr)
-                                        if (taskDate != null) break
-                                    } catch (e: Exception) { /* continue */ }
-                                }
-                                taskDate?.let {
-                                    val taskCalendar = Calendar.getInstance().apply { time = it }
-                                    taskCalendar.get(Calendar.YEAR) == filterYear && taskCalendar.get(Calendar.DAY_OF_YEAR) == filterDayOfYear
-                                } ?: false
-                            } ?: false
-                        }
-                    } else {
-                        allRawTasks
-                    }
-
-                    // 2. Фильтрация по завершенным задачам
-                    val completionFilteredTasks = dateFilteredTasks.filter { task ->
-                        if (!task.isCompleted) true else showCompletedTasks
-                    }
-
-                    Timber.d("Total raw tasks: ${allRawTasks.size}, After date filter: ${dateFilteredTasks.size}, After completion filter: ${completionFilteredTasks.size}")
-
-                    // 3. Сортировка
-                    val dateParsers = listOf(
-                        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()),
-                        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-                    )
-                    val deadlineDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
-                    val simpleDeadlineDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-
-                    val newSortedTasksList = completionFilteredTasks.sortedWith(
-                        compareBy<Task> { it.isCompleted }
-                            .thenBy { task ->
-                                task.deadline?.takeIf { it.isNotBlank() }?.let { deadlineStr ->
-                                    try { deadlineDateFormat.parse(deadlineStr) } catch (e: Exception) {
-                                        try { simpleDeadlineDateFormat.parse(deadlineStr) } catch (e2: Exception) { Date(Long.MAX_VALUE) }
-                                    }
-                                } ?: Date(Long.MAX_VALUE)
-                            }
-                            .thenByDescending { task ->
-                                task.changedDate?.let { dateStr ->
-                                    var parsedDate: Date? = null
-                                    for (parser in dateParsers) {
-                                        try { parsedDate = parser.parse(dateStr); if (parsedDate != null) break } catch (e: Exception) { /* continue */ }
-                                    }
-                                    parsedDate
-                                }
-                            }
-                            .thenBy { it.id.toIntOrNull() ?: 0 }
-                    )
-                    TaskProcessingOutput(newSortedTasksList, allRawTasks.size, null)
+                
+                withContext(Dispatchers.Main) {
+                    availableGroups = groups
+                    isLoading = false
                 }
-
-                // Обновление UI
-                if (output.processingError != null) {
-                    errorMessage = output.processingError
-                } else {
-                    if (!areTaskListsFunctionallyEquivalent(output.processedTasks, tasks)) {
-                        Timber.i("Task list for user ${user.name} has changed. Updating UI with ${output.processedTasks.size} tasks.")
-                        tasks = output.processedTasks
-                    } else {
-                        Timber.i("Task list for user ${user.name} has not changed (${output.processedTasks.size} tasks). No UI update for tasks list.")
-                    }
-                    errorMessage = null
-
-                    if (output.processedTasks.isEmpty() && tasks.isEmpty()) {
-                        Timber.w("No displayable tasks for user ${user.name} after filtering. Total raw tasks for this filter: ${output.rawTaskCount}")
-                        if (deadlineFilterDate != null) {
-                            val formatter = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
-                            val formattedDate = formatter.format(Date(deadlineFilterDate!!))
-                            errorMessage = "Задачи с крайним сроком на $formattedDate не найдены."
-                        } else if (output.rawTaskCount > 0) {
-                            errorMessage = "Задачи за последний месяц найдены, но отфильтрованы. Попробуйте изменить настройки отображения."
-                        } else {
-                            errorMessage = "Активные задачи за последний месяц не найдены."
-                        }
-                    }
-                }
-
             } catch (e: Exception) {
-                errorMessage = "Ошибка загрузки задач: ${e.message}"
-                Timber.e(e, "Failed to load all tasks with pagination")
-            } finally {
-                isLoading = false
+                withContext(Dispatchers.Main) {
+                    errorMessage = "Не удалось загрузить группы: ${e.message}"
+                    isLoading = false
+                    showGroupSelectionDialog = false
+                }
             }
         }
     }
 
-    private fun processTasks(tasksData: Any, tasksList: MutableList<Task>) {
-        Timber.d("Processing tasks from data type: ${tasksData.javaClass.simpleName}")
-        when (tasksData) {
-            is JSONObject -> {
-                val tasksIterator = tasksData.keys()
-                while (tasksIterator.hasNext()) {
-                    val taskId = tasksIterator.next()
-                    val taskJson = tasksData.getJSONObject(taskId)
-                    tasksList.add(createTaskFromJson(taskJson, taskId))
-                }
-            }
-            is JSONArray -> {
-                for (i in 0 until tasksData.length()) {
-                    val taskJson = tasksData.getJSONObject(i)
-                    tasksList.add(createTaskFromJson(taskJson))
-                }
+    fun selectDefaultGroup(groupId: String) {
+        defaultGroupId = groupId
+        encryptedPrefs.saveDefaultGroupId(groupId)
+        showGroupSelectionDialog = false
+        Timber.i("Default group set to $groupId")
+    }
+    // --- Конец управления группами ---
+
+    fun createTask(title: String, estimateMinutes: Int) {
+        if (users.isEmpty()) return
+        val user = users[currentUserIndex]
+        isCreatingTask = true
+
+        viewModelScope.launch {
+            val result = repository.createTask(title, user.userId, user.webhookUrl, estimateMinutes, defaultGroupId)
+            isCreatingTask = false
+            if (result.isSuccess) {
+                showCreateTaskDialog = false
+                refreshTasks()
+            } else {
+                errorMessage = "Ошибка создания задачи: ${result.exceptionOrNull()?.message}"
             }
         }
-        Timber.d("Processed ${tasksList.size} tasks.")
     }
 
-    private fun createTaskFromJson(taskJson: JSONObject, fallbackId: String = ""): Task {
-        val timeSpent = taskJson.optInt("timeSpentInLogs",
-            taskJson.optInt("TIME_SPENT_IN_LOGS", 0))
+    private suspend fun processAndSetTasks(rawTasks: List<Task>) {
+        withContext(Dispatchers.Default) {
+            val dateFilteredTasks = if (deadlineFilterDate != null) {
+                val filterCalendar = Calendar.getInstance().apply { timeInMillis = deadlineFilterDate!! }
+                val filterYear = filterCalendar.get(Calendar.YEAR)
+                val filterDayOfYear = filterCalendar.get(Calendar.DAY_OF_YEAR)
 
-        val tagsList = mutableListOf<String>()
-        val taskIdForLog = taskJson.optString("id", taskJson.optString("ID", fallbackId))
+                val parsers = listOf(
+                    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()),
+                    SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()),
+                    SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                )
 
-        if (taskJson.has("tags")) {
-            val tagsData = taskJson.get("tags")
-            Timber.d("Task ID $taskIdForLog has 'tags' data of type ${tagsData.javaClass.simpleName}: $tagsData")
-
-            when (tagsData) {
-                is JSONObject -> {
-                    // Format: "tags": { "4": { "id": "4", "name": "срочно" } }
-                    val keys = tagsData.keys()
-                    while (keys.hasNext()) {
-                        val key = keys.next()
-                        val tagObject = tagsData.optJSONObject(key)
-                        if (tagObject != null) {
-                            // Try to get "name", fallback to "TITLE", then to "title"
-                            var tagName = tagObject.optString("name")
-                            if (tagName.isBlank()) {
-                                tagName = tagObject.optString("TITLE")
-                            }
-                            if (tagName.isBlank()) {
-                                tagName = tagObject.optString("title")
-                            }
-
-                            if (tagName.isNotBlank()) {
-                                tagsList.add(tagName)
-                            } else {
-                                tagsList.add("?") // Add a placeholder if no name/title found
-                                Timber.w("Could not find 'name' or 'TITLE'/'title' for tag in task $taskIdForLog. Tag object: $tagObject")
-                            }
+                rawTasks.filter { task ->
+                    task.deadline?.let { deadlineStr ->
+                        var taskDate: Date? = null
+                        for (parser in parsers) {
+                            try {
+                                taskDate = parser.parse(deadlineStr)
+                                if (taskDate != null) break
+                            } catch (e: Exception) { /* continue */ }
                         }
-                    }
+                        taskDate?.let {
+                            val taskCalendar = Calendar.getInstance().apply { time = it }
+                            taskCalendar.get(Calendar.YEAR) == filterYear && taskCalendar.get(Calendar.DAY_OF_YEAR) == filterDayOfYear
+                        } ?: false
+                    } ?: false
                 }
-                is JSONArray -> {
-                    // This is a fallback for other possible formats.
-                    // Format 1: "tags": [ "срочно", "дизайн" ]
-                    // Format 2: "tags": [ { "name": "срочно" }, { "name": "дизайн" } ]
-                    for (i in 0 until tagsData.length()) {
-                        when (val item = tagsData.get(i)) {
-                            is String -> {
-                                if (item.isNotBlank()) {
-                                    tagsList.add(item)
-                                }
-                            }
-                            is JSONObject -> {
-                                var tagName = item.optString("name")
-                                if (tagName.isBlank()) {
-                                    tagName = item.optString("TITLE")
-                                }
-                                if (tagName.isBlank()) {
-                                    tagName = item.optString("title")
-                                }
-                                if (tagName.isNotBlank()) {
-                                    tagsList.add(tagName)
-                                } else {
-                                    Timber.w("Could not find 'name' or 'TITLE'/'title' for tag in JSONArray for task $taskIdForLog. Tag object: $item")
-                                }
-                            }
-                        }
-                    }
-                }
+            } else {
+                rawTasks
+            }
+
+            val completionFilteredTasks = dateFilteredTasks.filter { task ->
+                if (!task.isCompleted) true else showCompletedTasks
+            }
+
+            val sorted = completionFilteredTasks.sortedWith(
+                compareBy<Task> { it.isCompleted }
+                    .thenByDescending { it.changedDate }
+                    .thenBy { it.id.toIntOrNull() ?: 0 }
+            )
+
+            withContext(Dispatchers.Main) {
+                tasks = sorted
             }
         }
-
-        return Task(
-            id = taskIdForLog,
-            title = taskJson.optString("title", taskJson.optString("TITLE", "Задача без названия")),
-            description = taskJson.optString("description", taskJson.optString("DESCRIPTION", "")),
-            timeSpent = timeSpent,
-            timeEstimate = taskJson.optInt("timeEstimate", taskJson.optInt("TIME_ESTIMATE", 7200)),
-            status = taskJson.optString("status", taskJson.optString("STATUS", "")),
-            deadline = taskJson.optString("deadline", taskJson.optString("DEADLINE", null)),
-            changedDate = taskJson.optString("changedDate", taskJson.optString("CHANGED_DATE", null)),
-            tags = tagsList,
-            isImportant = taskJson.optString("priority", taskJson.optString("PRIORITY", "0")) == "2"
-        )
     }
 
     // Функция для сравнения списков задач
@@ -1072,103 +963,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         viewModelScope.launch {
-            if (isNetworkAvailable()) {
-                // Передаем только дельту времени
-                val success = syncTimeDirectly(task, elapsedSecondsThisSession)
-                if (!success) {
-                    Timber.w("Direct sync failed, falling back to WorkManager for task ${task.id}")
-                    enqueueSaveTimeWorker(context, task, elapsedSecondsThisSession)
-                }
-            } else {
-                Timber.i("Network not available. Enqueuing save time worker for task ${task.id}")
-                enqueueSaveTimeWorker(context, task, elapsedSecondsThisSession)
-            }
-        }
-    }
-
-    private suspend fun syncTimeDirectly(task: Task, secondsToSave: Int): Boolean = withContext(Dispatchers.IO) {
-        val user = users[currentUserIndex]
-        val url = "${user.webhookUrl}task.elapseditem.add"
-        val formBody = FormBody.Builder()
-            .add("taskId", task.id)
-            .add("arFields[SECONDS]", secondsToSave.toString())
-            .add("arFields[COMMENT_TEXT]", "Работа над задачей (${formatTime(secondsToSave)})")
-            .add("arFields[USER_ID]", user.userId)
-            .build()
-        val request = Request.Builder().url(url).post(formBody).build()
-
-        try {
-            val response = client.newCall(request).execute()
-            if (response.isSuccessful) {
-                val responseText = response.body?.string()
-                Timber.d("Save time response for task ${task.id}: $responseText")
-                val json = JSONObject(responseText ?: "{}")
-                if (json.has("result")) {
-                    Timber.i("Time saved successfully for task ${task.id}. Reloading tasks.")
-                    withContext(Dispatchers.Main) {
-                        viewModelScope.launch {
-                            delay(1000)
-                            loadTasks()
-                        }
-                    }
-                    return@withContext true
-                } else {
-                    val errorDesc = json.optString("error_description", "Unknown API error")
-                    Timber.w("Error saving time for task ${task.id}: $errorDesc.")
-                    withContext(Dispatchers.Main) {
-                        errorMessage = "Ошибка сохранения времени: $errorDesc"
-                    }
-                    return@withContext true // Считается "обработанной", не нужно ставить в очередь.
-                }
-            } else {
-                Timber.w("HTTP error saving time for task ${task.id}: ${response.code}. Fallback possible.")
-                return@withContext false
-            }
-        } catch (e: IOException) {
-            Timber.e(e, "Network error saving time for task ${task.id}. Fallback needed.")
-            return@withContext false
-        }
-    }
-
-    private fun enqueueSaveTimeWorker(context: Context, task: Task, seconds: Int) {
-        val user = users[currentUserIndex]
-        val workData = workDataOf(
-            SaveTimeWorker.KEY_TASK_ID to task.id,
-            SaveTimeWorker.KEY_SECONDS to seconds,
-            SaveTimeWorker.KEY_USER_ID to user.userId,
-            SaveTimeWorker.KEY_WEBHOOK_URL to user.webhookUrl,
-            SaveTimeWorker.KEY_USER_NAME to user.name
-        )
-
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-
-        val saveTimeWorkRequest = OneTimeWorkRequestBuilder<SaveTimeWorker>()
-            .setInputData(workData)
-            .setConstraints(constraints)
-            .setBackoffCriteria(
-                BackoffPolicy.EXPONENTIAL,
-                WorkRequest.MIN_BACKOFF_MILLIS,
-                TimeUnit.MILLISECONDS
+            // Используем Repository для сохранения (он сам решит: сеть или очередь)
+            repository.saveTaskTime(
+                taskId = task.id,
+                userId = user.userId,
+                webhookUrl = user.webhookUrl,
+                seconds = elapsedSecondsThisSession,
+                comment = "Работа над задачей (${formatTime(elapsedSecondsThisSession)})"
             )
-            .addTag("sync-time-${task.id}")
-            .build()
-
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            "saveTime_${task.id}_${System.currentTimeMillis()}",
-            ExistingWorkPolicy.APPEND_OR_REPLACE,
-            saveTimeWorkRequest
-        )
-
-        pendingSyncMessage = "Нет сети. Время для задачи '${task.title}' будет сохранено позже."
-        viewModelScope.launch {
-            delay(5000)
-            if (pendingSyncMessage?.contains(task.title) == true) {
-                pendingSyncMessage = null
-            }
+            
+            // Обновляем UI (Repository делает optimistic update, но нам нужно обновить список)
+            // observeTasks уже подписан, так что UI обновится сам, когда DB изменится
         }
-        Timber.i("Enqueued SaveTimeWorker for task ${task.id}.")
     }
 
     private fun isNetworkAvailable(): Boolean {
@@ -1222,10 +1028,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (sendComments) {
                 sendTimerComment(task, "Задача завершена, таймер остановлен", secondsToSave)
             }
-            viewModelScope.launch {
-                delay(1500)
-                completeTaskInBitrixInternal(task)
-            }
+            completeTaskInBitrixInternal(task)
         } else {
             Timber.d("Task ${task.id} timer was not active for it or had 0 seconds. Completing directly in Bitrix.")
             completeTaskInBitrixInternal(task)
@@ -1235,41 +1038,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun completeTaskInBitrixInternal(task: Task) {
         if (users.isEmpty()) return
         val user = users[currentUserIndex]
-        Timber.i("Sending completeTaskInBitrix for task ${task.id}, user ${user.name}")
-        val url = "${user.webhookUrl}tasks.task.complete"
-
-        val formBody = FormBody.Builder()
-            .add("taskId", task.id)
-            .build()
-
-        val request = Request.Builder()
-            .url(url)
-            .post(formBody)
-            .build()
-
-        client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                viewModelScope.launch {
-                    Timber.e(e, "Task complete network error for task ${task.id}")
-                }
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                viewModelScope.launch {
-                    response.body?.let { body ->
-                        val responseText = body.string()
-                        if (response.isSuccessful) {
-                            Timber.i("Task ${task.id} completed successfully in Bitrix. Response: $responseText")
-                        } else {
-                            Timber.w("Failed to complete task ${task.id} in Bitrix. Code: ${response.code}. Response: $responseText")
-                        }
-                        delay(1000)
-                        loadTasks()
-                    }
-                    response.close()
-                }
-            }
-        })
+        
+        viewModelScope.launch {
+            repository.completeTask(task.id, user.userId, user.webhookUrl)
+        }
     }
 
     fun toggleComments() {
@@ -1280,24 +1052,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleShowCompletedTasks() {
         showCompletedTasks = !showCompletedTasks
         Timber.i("Show completed tasks toggled to: $showCompletedTasks. Reloading tasks.")
-        loadTasks()
-    }
-
-    // updateWorkStatus удален
-
-    // --- Timeman API Calls - УДАЛЕНЫ ---
-
-    // startPeriodicUpdates удален
-
-    private fun startPeriodicTaskUpdates() {
-        viewModelScope.launch {
-            while (true) {
-                delay(300000)
-                if (users.isNotEmpty()) {
-                    loadTasks()
-                }
-            }
-        }
+        // Фильтр применяется в processAndSetTasks, нужно просто перечитать
+        observeTasks()
     }
 
     fun stopAndSaveCurrentTimer(context: Context) {
@@ -1350,52 +1106,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dismissAddCommentDialog()
         val user = users[currentUserIndex]
         textCommentStatusMessage = "Отправка комментария..."
-        Timber.i("Submitting text comment for task $taskId by user ${user.name}: '$commentText'")
-
-        val url = "${user.webhookUrl}task.commentitem.add"
-        val formBody = FormBody.Builder()
-            .add("TASK_ID", taskId)
-            .add("FIELDS[POST_MESSAGE]", commentText)
-            .add("FIELDS[AUTHOR_ID]", user.userId)
-            .build()
-
-        val request = Request.Builder().url(url).post(formBody).build()
-
-        client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                viewModelScope.launch {
-                    Timber.e(e, "Failed to submit text comment for task $taskId")
-                    textCommentStatusMessage = "Ошибка сети при отправке комментария."
-                    delayAndClearTextCommentStatus()
-                }
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                viewModelScope.launch {
-                    val responseBody = response.body?.string()
-                    if (response.isSuccessful && responseBody != null) {
-                        try {
-                            val json = JSONObject(responseBody)
-                            if (json.has("result") && json.optInt("result", 0) > 0) {
-                                Timber.i("Text comment submitted successfully for task $taskId. Response: $responseBody")
-                                textCommentStatusMessage = "Комментарий успешно добавлен."
-                            } else {
-                                val errorDesc = json.optString("error_description", "Не удалось добавить комментарий")
-                                Timber.w("API error submitting text comment for task $taskId: $errorDesc. Response: $responseBody")
-                                textCommentStatusMessage = "Ошибка API: $errorDesc"
-                            }
-                        } catch (e: Exception) {
-                            Timber.e(e, "Error parsing text comment response for task $taskId. Response: $responseBody")
-                            textCommentStatusMessage = "Ошибка обработки ответа сервера."
-                        }
-                    } else {
-                        Timber.w("Failed to submit text comment for task $taskId. Code: ${response.code}. Response: $responseBody")
-                        textCommentStatusMessage = "Ошибка сервера: ${response.code}"
-                    }
-                    delayAndClearTextCommentStatus()
-                }
-            }
-        })
+        
+        viewModelScope.launch {
+            repository.addComment(taskId, user.userId, user.webhookUrl, commentText)
+            textCommentStatusMessage = "Комментарий сохранен."
+            delayAndClearTextCommentStatus()
+        }
     }
 
     private fun delayAndClearTextCommentStatus(durationMillis: Long = 3500L) {
@@ -1512,7 +1228,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             if (json.optBoolean("result", false)) {
                                 Timber.i("Task ${taskToDelete.id} deleted successfully. Response: $responseBody")
                                 deleteTaskStatusMessage = "Задача '${taskToDelete.title}' успешно удалена."
-                                loadTasks()
+                                refreshTasks()
                             } else if (json.has("error")) {
                                 val errorDesc = json.optString("error_description", "Не удалось удалить задачу")
                                 Timber.w("API error deleting task ${taskToDelete.id}: $errorDesc. Response: $responseBody")
@@ -1523,11 +1239,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     if (resultObj.optBoolean("success", false)) {
                                         Timber.i("Task ${taskToDelete.id} deleted successfully (via result.success). Response: $responseBody")
                                         deleteTaskStatusMessage = "Задача '${taskToDelete.title}' успешно удалена."
-                                        loadTasks()
+                                        refreshTasks()
                                     } else if (resultObj.optBoolean("task", false)) {
                                         Timber.i("Task ${taskToDelete.id} deleted successfully (via result.task). Response: $responseBody")
                                         deleteTaskStatusMessage = "Задача '${taskToDelete.title}' успешно удалена."
-                                        loadTasks()
+                                        refreshTasks()
                                     } else {
                                         Timber.w("Failed to delete task ${taskToDelete.id}, result object present but no known success field. Response: $responseBody")
                                         deleteTaskStatusMessage = "Не удалось удалить задачу: неизвестный формат ответа в 'result'."
@@ -1535,11 +1251,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 } else if (json.optBoolean("result", false)) {
                                      Timber.i("Task ${taskToDelete.id} deleted successfully (via top-level result:true). Response: $responseBody")
                                      deleteTaskStatusMessage = "Задача '${taskToDelete.title}' успешно удалена."
-                                     loadTasks()
+                                     refreshTasks()
                                 } else if (!json.has("error")) {
                                     Timber.i("Task ${taskToDelete.id} likely deleted (result is not a known success structure, but no error field). Response: $responseBody")
                                     deleteTaskStatusMessage = "Задача '${taskToDelete.title}' удалена (ответ сервера неоднозначен, но нет ошибки)."
-                                    loadTasks()
+                                    refreshTasks()
                                 } else {
                                     Timber.w("Failed to delete task ${taskToDelete.id}, unknown response structure. Response: $responseBody")
                                     deleteTaskStatusMessage = "Не удалось удалить задачу: неизвестный ответ сервера."
@@ -1638,7 +1354,18 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            val viewModel: MainViewModel = viewModel()
+            // Инициализация БД и Репозитория
+            val database = remember { BitrixDatabase.getDatabase(applicationContext) }
+            val repository = remember { 
+                TaskRepositoryImpl(database.taskDao(), database.syncQueueDao(), OkHttpClient()) 
+            }
+            val encryptedPrefs = remember {
+                EncryptedPreferences(applicationContext)
+            }
+            
+            // Фабрика для ViewModel с параметрами
+            val viewModel: MainViewModel = viewModel(factory = MainViewModelFactory(application, repository, encryptedPrefs))
+            
             LaunchedEffect(Unit) {
                 viewModel.initViewModel(applicationContext)
             }
@@ -1732,6 +1459,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// Factory for MainViewModel
+class MainViewModelFactory(
+    private val application: Application,
+    private val repository: TaskRepository,
+    private val encryptedPrefs: EncryptedPreferences
+) : androidx.lifecycle.ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        return MainViewModel(application, repository, encryptedPrefs) as T
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LogViewerScreen(viewModel: MainViewModel) {
@@ -1810,11 +1548,23 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     if (viewModel.isLogViewerVisible) {
         LogViewerScreen(viewModel = viewModel)
     } else {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp)
-        ) {
+        Scaffold(
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = { viewModel.showCreateTaskDialog = true },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = "Создать задачу")
+                }
+            }
+        ) { paddingValues ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .padding(16.dp)
+            ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1861,6 +1611,16 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (!viewModel.isOnline) {
+                        Icon(
+                            imageVector = Icons.Default.CloudOff,
+                            contentDescription = "Нет сети",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                    }
+
                     val deadlineFilter = viewModel.deadlineFilterDate
                     if (deadlineFilter != null) {
                         Row(
@@ -1951,6 +1711,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                                 text = { Text("Добавить пользователя") },
                                 onClick = {
                                     viewModel.prepareAddUserDialog()
+                                    isSettingsExpanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Выбрать группу для задач (ID: ${viewModel.defaultGroupId})") },
+                                onClick = {
+                                    viewModel.openGroupSelectionDialog()
                                     isSettingsExpanded = false
                                 }
                             )
@@ -2162,6 +1929,47 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 )
             }
 
+            if (viewModel.showGroupSelectionDialog) {
+                AlertDialog(
+                    onDismissRequest = { viewModel.showGroupSelectionDialog = false },
+                    title = { Text("Выберите группу") },
+                    text = {
+                        LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                            items(viewModel.availableGroups) { (id, name) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { viewModel.selectDefaultGroup(id) }
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(text = name, style = MaterialTheme.typography.bodyLarge)
+                                    if (id == viewModel.defaultGroupId) {
+                                        Spacer(Modifier.weight(1f))
+                                        Icon(Icons.Default.Check, contentDescription = "Selected")
+                                    }
+                                }
+                                Divider()
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { viewModel.showGroupSelectionDialog = false }) {
+                            Text("Отмена")
+                        }
+                    }
+                )
+            }
+
+            if (viewModel.showCreateTaskDialog) {
+                CreateTaskDialog(
+                    onDismiss = { viewModel.showCreateTaskDialog = false },
+                    onConfirm = { title, minutes -> viewModel.createTask(title, minutes) },
+                    isLoading = viewModel.isCreatingTask
+                )
+            }
+
+            }
         }
     }
 }
@@ -2600,65 +2408,57 @@ fun AddUserDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val isConfirmEnabled = viewModel.newUserName.isNotBlank() &&
-                           viewModel.newUserWebhookUrl.isNotBlank() &&
-                           viewModel.newUserId.isNotBlank() &&
-                           viewModel.newUserAvatar.isNotBlank()
+    val context = LocalContext.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Добавить нового пользователя") },
+        title = { Text(if (viewModel.setupStep == 0) "Настройка портала" else "Выберите сотрудника") },
         text = {
-            LazyColumn {
-                item {
-                    OutlinedTextField(
-                        value = viewModel.newUserName,
-                        onValueChange = { viewModel.newUserName = it },
-                        label = { Text("Имя пользователя") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
+            Column {
+                if (viewModel.setupStep == 0) {
+                    Text("Введите Admin Webhook URL для загрузки списка сотрудников:")
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
-                        value = viewModel.newUserWebhookUrl,
-                        onValueChange = { viewModel.newUserWebhookUrl = it },
-                        label = { Text("URL вебхука") },
+                        value = viewModel.adminWebhookInput,
+                        onValueChange = { viewModel.adminWebhookInput = it },
+                        label = { Text("Webhook URL") },
                         modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
+                        singleLine = true,
+                        placeholder = { Text("https://b24.../rest/1/key/") }
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = viewModel.newUserId,
-                        onValueChange = { viewModel.newUserId = it },
-                        label = { Text("ID пользователя") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = viewModel.newUserAvatar,
-                        onValueChange = { viewModel.newUserAvatar = it },
-                        label = { Text("Инициалы для аватара") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = viewModel.newUserSupervisorId,
-                        onValueChange = { viewModel.newUserSupervisorId = it },
-                        label = { Text("ID руководителя (необязательно)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
+                    if (viewModel.isPortalLoading) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                } else {
+                    // Step 1: List
+                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                        items(viewModel.loadedUsersFromPortal) { user ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { viewModel.selectUserFromPortal(user, context) }
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                UserAvatar(user = user, size = 40)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(user.name, style = MaterialTheme.typography.bodyLarge)
+                            }
+                            Divider()
+                        }
+                    }
                 }
             }
         },
         confirmButton = {
-            Button(
-                onClick = onConfirm,
-                enabled = isConfirmEnabled
-            ) {
-                Text("Добавить")
+            if (viewModel.setupStep == 0) {
+                Button(
+                    onClick = { viewModel.loadUsersFromPortal() },
+                    enabled = !viewModel.isPortalLoading
+                ) {
+                    Text("Загрузить")
+                }
             }
         },
         dismissButton = {
@@ -2709,4 +2509,62 @@ fun TagChip(text: String) {
             fontWeight = FontWeight.Medium
         )
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CreateTaskDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String, Int) -> Unit,
+    isLoading: Boolean
+) {
+    var title by remember { mutableStateOf("") }
+    var estimateMinutesStr by remember { mutableStateOf("60") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Новая задача") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Название задачи") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = estimateMinutesStr,
+                    onValueChange = { if (it.all { char -> char.isDigit() }) estimateMinutesStr = it },
+                    label = { Text("Оценка времени (мин)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                )
+                if (isLoading) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val minutes = estimateMinutesStr.toIntOrNull() ?: 0
+                    if (title.isNotBlank()) {
+                        onConfirm(title, minutes)
+                    }
+                },
+                enabled = !isLoading && title.isNotBlank()
+            ) {
+                Text("Создать")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Отмена")
+            }
+        }
+    )
 }
