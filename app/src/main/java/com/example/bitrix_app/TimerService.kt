@@ -47,6 +47,10 @@ class TimerService : Service() {
     private var currentUiUserId: String? = null
     private var currentUiUserName: String? = null
 
+    // Timer state persistence
+    private lateinit var timerStatePrefs: TimerStatePreferences
+    private var periodicSaveJob: Job? = null
+
 
     inner class LocalBinder : Binder() {
         fun getService(): TimerService = this@TimerService
@@ -68,6 +72,16 @@ class TimerService : Service() {
     override fun onCreate() {
         super.onCreate()
         Timber.i("TimerService onCreate")
+        
+        // Initialize persistence
+        timerStatePrefs = TimerStatePreferences(applicationContext)
+        
+        // Restore any saved timer states
+        restoreTimerStates()
+        
+        // Start periodic auto-save (every 5 minutes)
+        startPeriodicAutoSave()
+        
         createNotificationChannel()
         startForeground(TIMER_NOTIFICATION_ID, createNotification()) // Запускаем сразу с пустым уведомлением
     }
@@ -105,6 +119,13 @@ class TimerService : Service() {
 
     override fun onDestroy() {
         Timber.i("TimerService onDestroy")
+        
+        // Save all active timer states before destruction
+        saveAllTimerStates()
+        
+        // Stop periodic save job
+        periodicSaveJob?.cancel()
+        
         stopAllTimerJobs()
         serviceScope.cancel() // Отменяем все корутины в serviceScope
         super.onDestroy()
@@ -134,6 +155,18 @@ class TimerService : Service() {
         if (userId == currentUiUserId) {
             _currentUserSpecificStateFlow.value = newState
         }
+        
+        // Save state immediately when starting a timer
+        timerStatePrefs.saveTimerState(
+            userId = userId,
+            userName = userName,
+            activeTaskId = taskId,
+            activeTaskTitle = taskTitle,
+            timerSeconds = initialSeconds,
+            initialSeconds = initialSeconds,
+            isUserPaused = false
+        )
+        
         startTimerJob(userId)
         updateNotification()
     }
@@ -145,6 +178,9 @@ class TimerService : Service() {
         val deltaSeconds = if (currentTotalTime >= initialTime) currentTotalTime - initialTime else 0
         
         Timber.i("Service: Stopping timer for task '${userState.activeTaskTitle}' for user ${userState.userName}. Total: $currentTotalTime, Initial: $initialTime, Delta: $deltaSeconds.")
+        
+        // Clear persisted timer state since we're stopping
+        timerStatePrefs.clearTimerState(userId)
         
         val newState = userState.copy(
             activeTaskId = null,
@@ -170,6 +206,18 @@ class TimerService : Service() {
                 if (userId == currentUiUserId) {
                     _currentUserSpecificStateFlow.value = newState
                 }
+                
+                // Save paused state immediately
+                timerStatePrefs.saveTimerState(
+                    userId = userId,
+                    userName = newState.userName,
+                    activeTaskId = newState.activeTaskId,
+                    activeTaskTitle = newState.activeTaskTitle,
+                    timerSeconds = newState.timerSeconds,
+                    initialSeconds = newState.initialSeconds,
+                    isUserPaused = true
+                )
+                
                 Timber.i("Service: User paused timer for task '${currentState.activeTaskTitle}' for user ${currentState.userName}")
                 updateNotification()
             }
@@ -184,6 +232,18 @@ class TimerService : Service() {
                 if (userId == currentUiUserId) {
                     _currentUserSpecificStateFlow.value = newState
                 }
+                
+                // Save resumed state immediately
+                timerStatePrefs.saveTimerState(
+                    userId = userId,
+                    userName = newState.userName,
+                    activeTaskId = newState.activeTaskId,
+                    activeTaskTitle = newState.activeTaskTitle,
+                    timerSeconds = newState.timerSeconds,
+                    initialSeconds = newState.initialSeconds,
+                    isUserPaused = false
+                )
+                
                 Timber.i("Service: User resumed timer for task '${currentState.activeTaskTitle}' for user ${currentState.userName}")
                 startTimerJob(userId) // Убедимся, что таймер запущен
                 updateNotification()
@@ -203,9 +263,11 @@ class TimerService : Service() {
 
         userTimerJobs[userId] = serviceScope.launch {
             Timber.d("Timer job started for user ID: $userId.")
+            var secondsCounter = 0
             try {
                 while (isActive) {
                     delay(1000)
+                    secondsCounter++
                     _allUserStates.value[userId]?.let { currentUserState ->
                         if (currentUserState.activeTaskId != null && !currentUserState.isEffectivelyPaused) {
                             val newSeconds = currentUserState.timerSeconds + 1
@@ -215,6 +277,20 @@ class TimerService : Service() {
                             if (userId == currentUiUserId) {
                                 _currentUserSpecificStateFlow.value = updatedUserState
                                 updateNotification() // Обновляем уведомление, если это текущий пользователь и таймер тикает
+                            }
+                            
+                            // Auto-save timer state every 60 seconds (1 minute)
+                            if (secondsCounter % 60 == 0) {
+                                timerStatePrefs.saveTimerState(
+                                    userId = updatedUserState.userId,
+                                    userName = updatedUserState.userName,
+                                    activeTaskId = updatedUserState.activeTaskId,
+                                    activeTaskTitle = updatedUserState.activeTaskTitle,
+                                    timerSeconds = updatedUserState.timerSeconds,
+                                    initialSeconds = updatedUserState.initialSeconds,
+                                    isUserPaused = updatedUserState.isUserPaused
+                                )
+                                Timber.d("Auto-saved timer state for user $userId at $newSeconds seconds")
                             }
                         } else if (currentUserState.activeTaskId == null) {
                             Timber.d("No active task for user ID: $userId, stopping timer job from within.")
@@ -319,5 +395,78 @@ class TimerService : Service() {
             .setOngoing(true)
             .setSilent(true)
             .build()
+    }
+
+    // --- Timer State Persistence Methods ---
+
+    /**
+     * Restore timer states from persistent storage on service creation
+     */
+    private fun restoreTimerStates() {
+        val activeUserIds = timerStatePrefs.getAllActiveUserIds()
+        if (activeUserIds.isEmpty()) {
+            Timber.i("No saved timer states to restore")
+            return
+        }
+
+        Timber.i("Restoring timer states for ${activeUserIds.size} users")
+        val restoredStates = mutableMapOf<String, TimerServiceState>()
+
+        for (userId in activeUserIds) {
+            val state = timerStatePrefs.loadTimerState(userId)
+            if (state != null) {
+                restoredStates[userId] = state
+                // Restart the timer job for this user if not paused
+                if (!state.isUserPaused) {
+                    startTimerJob(userId)
+                }
+                Timber.i("Restored timer for user ${state.userName}: task=${state.activeTaskTitle}, seconds=${state.timerSeconds}")
+            }
+        }
+
+        _allUserStates.value = restoredStates
+        
+        // If current UI user has a restored state, update the flow
+        currentUiUserId?.let { uiUserId ->
+            _currentUserSpecificStateFlow.value = restoredStates[uiUserId]
+        }
+        
+        updateNotification()
+    }
+
+    /**
+     * Start periodic auto-save job (every 5 minutes)
+     */
+    private fun startPeriodicAutoSave() {
+        periodicSaveJob = serviceScope.launch {
+            while (isActive) {
+                delay(5 * 60 * 1000) // 5 minutes
+                saveAllTimerStates()
+                Timber.d("Periodic auto-save completed")
+            }
+        }
+        Timber.d("Periodic auto-save started (every 5 minutes)")
+    }
+
+    /**
+     * Save all active timer states to persistent storage
+     */
+    private fun saveAllTimerStates() {
+        _allUserStates.value.forEach { (userId, state) ->
+            if (state.activeTaskId != null) {
+                timerStatePrefs.saveTimerState(
+                    userId = userId,
+                    userName = state.userName,
+                    activeTaskId = state.activeTaskId,
+                    activeTaskTitle = state.activeTaskTitle,
+                    timerSeconds = state.timerSeconds,
+                    initialSeconds = state.initialSeconds,
+                    isUserPaused = state.isUserPaused
+                )
+            } else {
+                // No active task, clear any saved state
+                timerStatePrefs.clearTimerState(userId)
+            }
+        }
     }
 }
