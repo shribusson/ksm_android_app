@@ -268,6 +268,13 @@ fun TaskListScreen(viewModel: MainViewModel) {
                                     isSettingsExpanded = false
                                 }
                             )
+                            DropdownMenuItem(
+                                text = { Text("Экспорт логов для отладки") },
+                                onClick = {
+                                    com.example.bitrix_app.LogExportHelper.shareLogFile(context)
+                                    isSettingsExpanded = false
+                                }
+                            )
                         }
                     }
                 }
