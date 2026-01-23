@@ -74,9 +74,23 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // Ensure timer state is saved before activity destruction
+        timerService?.let { service ->
+            Timber.i("MainActivity onDestroy - saving timer state")
+            service.saveAllTimerStatesSync()
+        }
         if (isBound) {
             unbindService(connection)
             isBound = false
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Save timer state when app goes to background
+        timerService?.let { service ->
+            Timber.d("MainActivity onPause - saving timer state")
+            service.saveAllTimerStatesSync()
         }
     }
 }
