@@ -2,6 +2,7 @@ package com.example.bitrix_app
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import androidx.core.content.FileProvider
 import timber.log.Timber
 import java.io.File
@@ -36,7 +37,7 @@ object LogExportHelper {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_STREAM, uri)
                 putExtra(Intent.EXTRA_SUBJECT, "Bitrix App Logs")
-                putExtra(Intent.EXTRA_TEXT, "Attached are the application logs from ${android.os.Build.MODEL}")
+                putExtra(Intent.EXTRA_TEXT, "Attached are the application logs from ${Build.MODEL}")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
