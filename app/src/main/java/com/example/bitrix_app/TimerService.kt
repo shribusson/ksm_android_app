@@ -405,11 +405,11 @@ class TimerService : Service() {
     private fun restoreTimerStates() {
         val activeUserIds = timerStatePrefs.getAllActiveUserIds()
         if (activeUserIds.isEmpty()) {
-            Timber.i("No saved timer states to restore")
+            Timber.i("TIMER_PERSISTENCE: No saved timer states to restore")
             return
         }
 
-        Timber.i("Restoring timer states for ${activeUserIds.size} users")
+        Timber.i("TIMER_PERSISTENCE: Restoring timer states for ${activeUserIds.size} users: $activeUserIds")
         val restoredStates = mutableMapOf<String, TimerServiceState>()
 
         for (userId in activeUserIds) {
@@ -419,8 +419,10 @@ class TimerService : Service() {
                 // Restart the timer job for this user if not paused
                 if (!state.isUserPaused) {
                     startTimerJob(userId)
+                    Timber.i("TIMER_PERSISTENCE: Restarted timer job for user ${state.userName}")
+                } else {
+                    Timber.i("TIMER_PERSISTENCE: Timer is paused for user ${state.userName}, not restarting job")
                 }
-                Timber.i("Restored timer for user ${state.userName}: task=${state.activeTaskTitle}, seconds=${state.timerSeconds}")
             }
         }
 
@@ -432,6 +434,7 @@ class TimerService : Service() {
         }
         
         updateNotification()
+        Timber.i("TIMER_PERSISTENCE: Restoration complete, ${restoredStates.size} timers active")
     }
 
     /**
@@ -441,8 +444,15 @@ class TimerService : Service() {
         periodicSaveJob = serviceScope.launch {
             while (isActive) {
                 delay(5 * 60 * 1000) // 5 minutes
-                saveAllTimerStates()
-                Timber.d("Periodic auto-save completed")
+                val activeCount = _allUserStates.value.count { it.value.activeTaskId != null }
+                if (activeCount > 0) {
+                    saveAllTimerStates()
+                    Timber.i("TIMER_PERSISTENCE: Periodic auto-save completed for $activeCount active timers")
+                }
+            }
+        }
+        Timber.i("TIMER_PERSISTENCE: Periodic auto-save started (every 5 minutes)")
+    }
             }
         }
         Timber.d("Periodic auto-save started (every 5 minutes)")

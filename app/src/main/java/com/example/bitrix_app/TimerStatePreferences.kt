@@ -37,7 +37,7 @@ class TimerStatePreferences(context: Context) {
             putLong("${userId}_lastSavedTimestamp", lastSavedTimestamp)
             apply()
         }
-        Timber.d("Saved timer state for user $userId: task=$activeTaskId, seconds=$timerSeconds")
+        Timber.i("TIMER_PERSISTENCE: Saved state for user $userId (${userName}): task=$activeTaskId ($activeTaskTitle), seconds=$timerSeconds, initial=$initialSeconds, paused=$isUserPaused")
     }
 
     /**
@@ -48,6 +48,7 @@ class TimerStatePreferences(context: Context) {
         
         // If no active task, return null
         if (activeTaskId == null) {
+            Timber.d("TIMER_PERSISTENCE: No saved state for user $userId")
             return null
         }
 
@@ -68,7 +69,7 @@ class TimerStatePreferences(context: Context) {
 
         val adjustedTimerSeconds = timerSeconds + elapsedSecondsSinceLastSave
 
-        Timber.i("Restored timer state for user $userId: task=$activeTaskId, seconds=$timerSeconds + $elapsedSecondsSinceLastSave elapsed = $adjustedTimerSeconds")
+        Timber.i("TIMER_PERSISTENCE: Restored state for user $userId (${userName}): task=$activeTaskId ($activeTaskTitle), saved_seconds=$timerSeconds + elapsed=$elapsedSecondsSinceLastSave = total=$adjustedTimerSeconds, initial=$initialSeconds, paused=$isUserPaused")
 
         return TimerServiceState(
             userId = userId,
@@ -95,7 +96,7 @@ class TimerStatePreferences(context: Context) {
             remove("${userId}_lastSavedTimestamp")
             apply()
         }
-        Timber.d("Cleared timer state for user $userId")
+        Timber.i("TIMER_PERSISTENCE: Cleared state for user $userId")
     }
 
     /**
