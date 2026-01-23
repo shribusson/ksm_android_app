@@ -28,7 +28,7 @@ echo -e "${YELLOW}=== Обновление приложения на устро�
 
 # Подключение к устройству
 echo -e "${YELLOW}1. Подключение к устройству через ADB...${NC}"
-adb connect $DEVICE_IP:5555
+adb connect "$DEVICE_IP:5555"
 
 # Проверка подключения
 if ! adb devices | grep -q "$DEVICE_IP:5555"; then
@@ -47,10 +47,10 @@ echo -e "${YELLOW}2. Скачивание последней версии из G
 APK_FILE="app-release.apk"
 
 # Удаление старого APK если есть
-rm -f $APK_FILE
+rm -f "$APK_FILE"
 
 # Скачивание
-if ! wget -q https://github.com/$GITHUB_REPO/releases/latest/download/app-release.apk -O $APK_FILE; then
+if ! wget -q "https://github.com/$GITHUB_REPO/releases/latest/download/app-release.apk" -O "$APK_FILE"; then
     echo -e "${RED}Ошибка: Не удалось скачать APK${NC}"
     echo "Возможно, релиз еще не создан. Проверьте:"
     echo "  https://github.com/$GITHUB_REPO/releases"
@@ -61,7 +61,7 @@ echo -e "${GREEN}✓ APK скачан${NC}"
 
 # Установка
 echo -e "${YELLOW}3. Установка APK...${NC}"
-if ! adb install -r $APK_FILE; then
+if ! adb install -r "$APK_FILE"; then
     echo -e "${RED}Ошибка: Не удалось установить APK${NC}"
     exit 1
 fi
@@ -70,15 +70,15 @@ echo -e "${GREEN}✓ APK установлен${NC}"
 
 # Перезапуск приложения
 echo -e "${YELLOW}4. Перезапуск приложения...${NC}"
-adb shell am force-stop $PACKAGE_NAME
+adb shell am force-stop "$PACKAGE_NAME"
 sleep 2
-adb shell am start -n $PACKAGE_NAME/.MainActivity
+adb shell am start -n "$PACKAGE_NAME/.MainActivity"
 
 echo -e "${GREEN}✓ Приложение перезапущено${NC}"
 
 # Вывод версии
 echo -e "${YELLOW}5. Информация о приложении:${NC}"
-adb shell dumpsys package $PACKAGE_NAME | grep -E "versionCode|versionName" | head -2
+adb shell dumpsys package "$PACKAGE_NAME" | grep -E "versionCode|versionName" | head -2
 
 # Опциональный вывод логов
 echo -e "${YELLOW}6. Последние логи приложения:${NC}"

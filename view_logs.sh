@@ -29,7 +29,7 @@ echo -e "${YELLOW}=== Просмотр логов устройства $DEVICE_I
 
 # Подключение
 echo -e "${YELLOW}Подключение к устройству...${NC}"
-adb connect $DEVICE_IP:5555
+adb connect "$DEVICE_IP:5555"
 
 if ! adb devices | grep -q "$DEVICE_IP:5555"; then
     echo -e "${RED}Ошибка: Не удалось подключиться к устройству${NC}"
@@ -69,7 +69,7 @@ case $LOG_TYPE in
         sleep 2
         
         # Проверяем, запущено ли приложение
-        PID=$(adb shell pidof -s $PACKAGE_NAME 2>/dev/null)
+        PID=$(adb shell pidof -s "$PACKAGE_NAME" 2>/dev/null)
         
         if [ -n "$PID" ]; then
             echo -e "${GREEN}✓ Приложение запущено (PID: $PID)${NC}"
