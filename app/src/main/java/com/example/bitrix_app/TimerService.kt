@@ -159,6 +159,7 @@ class TimerService : Service() {
         }
         stopTimerJob(userId)
         updateNotification()
+        checkAndStopServiceIfNoActiveTimers()
         return deltaSeconds
     }
 
@@ -192,6 +193,15 @@ class TimerService : Service() {
     }
 
     // Методы системной паузы удалены
+
+    private fun checkAndStopServiceIfNoActiveTimers() {
+        val hasActiveTimers = _allUserStates.value.values.any { it.activeTaskId != null }
+        if (!hasActiveTimers) {
+            Timber.i("No active timers remaining. Stopping foreground service.")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+    }
 
     // --- Конец публичных методов ---
 
@@ -282,6 +292,7 @@ class TimerService : Service() {
         val uiState = _currentUserSpecificStateFlow.value // Состояние текущего пользователя в UI
         val title: String
         val text: String
+        val hasActiveTimer: Boolean
 
         if (uiState != null && uiState.activeTaskId != null) {
             val taskTitle = uiState.activeTaskTitle ?: "Задача"
@@ -292,14 +303,17 @@ class TimerService : Service() {
                 uiState.isUserPaused -> "Пауза - $timeStr"
                 else -> "В работе - $timeStr"
             }
+            hasActiveTimer = true
         } else {
             // Если у текущего UI пользователя нет активной задачи, или currentUiUserId не установлен
             val activeTimersCount = _allUserStates.value.values.count { it.activeTaskId != null && !it.isEffectivelyPaused }
             title = "${currentUiUserName ?: "Bitrix App"} - Таймер"
             if (activeTimersCount > 0) {
                 text = "Нет активной задачи для Вас. Всего активных таймеров: $activeTimersCount"
+                hasActiveTimer = true
             } else {
                 text = "Нет активных задач"
+                hasActiveTimer = false
             }
         }
 
@@ -316,7 +330,7 @@ class TimerService : Service() {
             .setContentText(text)
             .setSmallIcon(R.mipmap.ic_launcher) // Замените на свою иконку
             .setContentIntent(pendingIntent)
-            .setOngoing(true)
+            .setOngoing(hasActiveTimer) // Only set as ongoing when there's an active timer
             .setSilent(true)
             .build()
     }

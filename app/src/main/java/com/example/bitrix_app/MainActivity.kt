@@ -78,5 +78,7 @@ class MainActivity : ComponentActivity() {
             unbindService(connection)
             isBound = false
         }
+        // Don't stop the service here - let it manage its own lifecycle
+        // It will stop itself when there are no active timers
     }
 }
