@@ -66,6 +66,11 @@ class TimerService : Service() {
         const val ACTION_START_FOREGROUND_SERVICE = "com.example.bitrix_app.action.START_FOREGROUND_SERVICE"
         const val ACTION_STOP_FOREGROUND_SERVICE = "com.example.bitrix_app.action.STOP_FOREGROUND_SERVICE"
 
+        // Timer persistence constants
+        private const val AUTO_SAVE_INTERVAL_SECONDS = 60
+        private const val PERIODIC_SAVE_INTERVAL_MS = 5 * 60 * 1000L // 5 minutes
+    }
+
         // Можно добавить и другие actions, если потребуется управлять сервисом без прямого связывания
     }
 
@@ -280,7 +285,7 @@ class TimerService : Service() {
                             }
                             
                             // Auto-save timer state every 60 seconds (1 minute)
-                            if (secondsCounter % 60 == 0) {
+                            if (secondsCounter % AUTO_SAVE_INTERVAL_SECONDS == 0) {
                                 timerStatePrefs.saveTimerState(
                                     userId = updatedUserState.userId,
                                     userName = updatedUserState.userName,
@@ -443,7 +448,7 @@ class TimerService : Service() {
     private fun startPeriodicAutoSave() {
         periodicSaveJob = serviceScope.launch {
             while (isActive) {
-                delay(5 * 60 * 1000) // 5 minutes
+                delay(PERIODIC_SAVE_INTERVAL_MS)
                 val activeCount = _allUserStates.value.count { it.value.activeTaskId != null }
                 if (activeCount > 0) {
                     saveAllTimerStates()
@@ -452,10 +457,6 @@ class TimerService : Service() {
             }
         }
         Timber.i("TIMER_PERSISTENCE: Periodic auto-save started (every 5 minutes)")
-    }
-            }
-        }
-        Timber.d("Periodic auto-save started (every 5 minutes)")
     }
 
     /**

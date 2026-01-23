@@ -131,7 +131,10 @@ class TimerStatePreferencesTest {
         val timerSeconds = 3600
         val initialSeconds = 1800
         val isUserPaused = false
-        val timestamp = System.currentTimeMillis() - 60000 // 60 seconds ago
+        val elapsedTimeMs = 60000L // 60 seconds ago
+        val timestamp = System.currentTimeMillis() - elapsedTimeMs
+        val expectedElapsedSeconds = (elapsedTimeMs / 1000).toInt()
+        val toleranceSeconds = 1 // Allow 1 second tolerance for test execution time
 
         whenever(mockSharedPrefs.getString("${userId}_activeTaskId", null))
             .thenReturn(activeTaskId)
@@ -153,9 +156,11 @@ class TimerStatePreferencesTest {
 
         // Then
         assertNotNull(result)
+        val expectedMin = timerSeconds + expectedElapsedSeconds - toleranceSeconds
+        val expectedMax = timerSeconds + expectedElapsedSeconds + toleranceSeconds
         // Should have added approximately 60 seconds (allow some margin for test execution time)
-        assert(result.timerSeconds >= timerSeconds + 59 && result.timerSeconds <= timerSeconds + 61) {
-            "Expected timer seconds to be around ${timerSeconds + 60}, but was ${result.timerSeconds}"
+        assert(result.timerSeconds >= expectedMin && result.timerSeconds <= expectedMax) {
+            "Expected timer seconds to be around ${timerSeconds + expectedElapsedSeconds}, but was ${result.timerSeconds}"
         }
     }
 
