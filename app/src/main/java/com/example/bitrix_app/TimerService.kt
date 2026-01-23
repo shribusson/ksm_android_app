@@ -469,4 +469,12 @@ class TimerService : Service() {
             }
         }
     }
+
+    /**
+     * Synchronous version for lifecycle callbacks (onPause, onDestroy)
+     * to ensure state is saved before app is killed
+     */
+    fun saveAllTimerStatesSync() {
+        saveAllTimerStates()
+    }
 }
