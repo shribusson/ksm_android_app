@@ -20,5 +20,7 @@ class BitrixApp : Application(), androidx.work.Configuration.Provider {
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
+        // Always enable file logging for remote debugging
+        Timber.plant(FileLoggingTree(this))
     }
 }

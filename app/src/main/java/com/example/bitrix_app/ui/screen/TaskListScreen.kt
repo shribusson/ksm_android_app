@@ -71,6 +71,7 @@ import com.example.bitrix_app.ui.component.TaskCard
 import com.example.bitrix_app.ui.component.UserAvatar
 import com.example.bitrix_app.ui.util.formatTime
 import com.example.bitrix_app.ui.viewmodel.MainViewModel
+import com.example.bitrix_app.LogExportHelper
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -265,6 +266,13 @@ fun TaskListScreen(viewModel: MainViewModel) {
                                 text = { Text("Выбрать группу для задач (ID: ${viewModel.defaultGroupId})") },
                                 onClick = {
                                     viewModel.openGroupSelectionDialog()
+                                    isSettingsExpanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Экспорт логов для отладки") },
+                                onClick = {
+                                    LogExportHelper.shareLogFile(context)
                                     isSettingsExpanded = false
                                 }
                             )
